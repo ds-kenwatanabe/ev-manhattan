@@ -95,7 +95,7 @@ Reporting:
 From the project root:
 
 ```bash
-cd /home/chris/PycharmProjects/ev-manhattan
+cd ev-manhattan
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python src/run/web_app.py --host 127.0.0.1 --port 8000

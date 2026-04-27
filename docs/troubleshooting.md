@@ -5,7 +5,7 @@
 Run commands from the project root:
 
 ```bash
-cd /home/chris/PycharmProjects/ev-manhattan
+cd ev-manhattan
 ```
 
 Check that this file exists:

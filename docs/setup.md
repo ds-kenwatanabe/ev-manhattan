@@ -13,7 +13,7 @@ This project is a local Python application. The browser UI runs with the standar
 From the project root:
 
 ```bash
-cd /home/chris/PycharmProjects/ev-manhattan
+cd ev-manhattan
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
