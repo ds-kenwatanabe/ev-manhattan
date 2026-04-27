@@ -131,9 +131,22 @@ The effective speed is never allowed below `5 km/h`.
 
 ## Route Completion
 
-The intended browser behavior is to stop a route only because of time constraints.
+The planner treats the following as hard constraints:
 
-If the vehicle reaches the configured `End time`, it returns a partial route with:
+- customer service time,
+- customer time windows,
+- vehicle capacity,
+- mandatory return-to-depot when enabled,
+- depot end time and optional driver shift limit,
+- charging station queue wait,
+- charger plug availability and optional required plug type,
+- minimum reserve SoC,
+- depot charging availability,
+- partial charging decisions.
+
+The browser route stops when one of these constraints prevents a feasible next step.
+
+If the vehicle reaches the configured `End time` or driver shift limit, it returns a partial route with:
 
 ```text
 Did not complete route in the given time
@@ -141,7 +154,7 @@ Did not complete route in the given time
 
 The UI still shows customers reached, recharge stops reached, remaining planned stops, and a map of the partial route.
 
-If the planner cannot find any reachable charger, it marks an energy failure internally. With the current Manhattan charger data and normal settings, the expected user-facing stop condition is time exhaustion.
+If a customer time window cannot be met after travel, waiting, and service time, the route stops with a time-window failure. If route demand exceeds vehicle capacity, it stops before dispatch with a capacity failure. If no compatible reachable charger exists while maintaining reserve SoC, it stops with an energy failure.
 
 ## Energy And Cost
 
@@ -197,6 +210,15 @@ kwh_added = charger_power_kw * (dt / 60)
 The added energy is capped so SoC never exceeds `battery_kwh`.
 
 For missing or zero public charger power, the planner uses `7.2 kW` as a Level 2 fallback. Depot charging uses the browser's `Depot power kW` field.
+
+Charging is partial by default in the active browser planner. When a vehicle stops to charge, it targets the smaller of:
+
+```text
+usable_battery_kwh
+energy_needed_to_drive_next_leg + required_energy_after_arrival
+```
+
+If a queue wait is configured, the vehicle waits at the charger before charging. Chargers with zero available plugs are ignored. If `Required plug type` is set, only chargers whose `plug_type` or `connection_type` text contains that value are considered.
 
 ## Dollar Cost Calculation
 

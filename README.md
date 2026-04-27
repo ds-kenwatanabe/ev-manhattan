@@ -10,6 +10,7 @@ The current workflow is interactive: start the web app, choose the depot/custome
 - Lets you choose customers randomly or from an interactive map.
 - Lets you use depot coordinates or choose the depot on the map.
 - Supports multiple vehicles and repeated runs.
+- Enforces service time, customer time windows, vehicle capacity, driver shift limits, reserve SoC, charger availability, depot return, and partial charging.
 - Supports synthetic, local NYISO, or flat electricity prices.
 - Can fetch NYISO Zone J prices dynamically for the selected day when public NYISO data is available.
 - Generates per-run price files and routing instances.
@@ -37,9 +38,9 @@ EV feasibility loop:
 3. Convert distance to driving energy: `kWh = distance_km * kWh per km`.
 4. Estimate travel time from distance, base speed, traffic multiplier, and `dt`.
 5. Check whether the vehicle can reach the next stop and still have enough energy to reach a real charger afterward.
-6. If yes, drive to the stop.
-7. If no, drive to a reachable charger, charge, then retry the same stop.
-8. Stop only when the configured `End time` is exceeded.
+6. If yes, drive to the stop, wait until the customer time window opens if needed, and apply service time.
+7. If no, drive to a reachable compatible charger, wait for queue time if configured, partially charge to the energy needed for the next feasible leg, then retry the same stop.
+8. Stop when a hard constraint is violated: route time/shift, customer time window, capacity, reserve SoC, or charger availability.
 
 Recharge stops appear as route steps, for example:
 
@@ -150,6 +151,7 @@ Main controls:
 - `Min charger kW` and `Max chargers available`: charger filtering.
 - `Enable break` and `Billable break`: billing/reporting controls.
 - `Battery kWh`, `Initial SoC %`, `Reserve kWh`, `kWh per km`: vehicle energy controls.
+- `Service min/customer`, `Shift limit min`, `Queue wait min`, `Required plug type`, `Mandatory return to depot`: hard constraint controls.
 - `Start time` and `End time`: route operating window.
 
 After a run, the page shows overview and per-vehicle maps, route status, stop order, recharge details, energy used, driving energy value, recharge cost, total estimated energy cost, and generated data links.

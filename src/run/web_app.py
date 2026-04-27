@@ -101,6 +101,11 @@ def _default_form():
         "runs": "1",
         "customers_per_vehicle": "3",
         "optimizer_mode": "evrptw_greedy",
+        "service_time_min": "5",
+        "shift_limit_min": "0",
+        "charger_queue_wait_min": "0",
+        "required_plug_type": "",
+        "mandatory_return_to_depot": "on",
         "battery_kwh": str(vehicle["battery_kwh"]),
         "initial_soc_pct": "1.0",
         "reserve_kwh": "0.0",
@@ -884,6 +889,10 @@ def _vehicle_summary(inst, vehicle_id, route, plan, run_config):
         status_text = "Did not complete route in the given time"
     elif completion_reason == "energy":
         status_text = "Did not complete route with the available battery and chargers"
+    elif completion_reason == "capacity":
+        status_text = "Did not complete route because vehicle capacity was exceeded"
+    elif completion_reason == "time_window":
+        status_text = "Did not complete route because a customer time window or service time was missed"
     else:
         status_text = "Did not complete route"
 
@@ -935,6 +944,11 @@ def _make_instance(base_inst, form):
     template["initial_soc_pct"] = _float_field(form, "initial_soc_pct", 1.0, 0.0, 1.0)
     template["reserve_kwh"] = _float_field(form, "reserve_kwh", 0.0, 0.0)
     template["cons_kwh_per_km"] = _float_field(form, "cons_kwh_per_km", template["cons_kwh_per_km"], 0.01)
+    template["service_time_min"] = _int_field(form, "service_time_min", 5, 0, 24 * 60)
+    template["shift_limit_min"] = _int_field(form, "shift_limit_min", 0, 0, 24 * 60)
+    template["charger_queue_wait_min"] = _int_field(form, "charger_queue_wait_min", 0, 0, 24 * 60)
+    template["required_plug_type"] = _field(form, "required_plug_type", "").strip()
+    template["mandatory_return_to_depot"] = _checked(form, "mandatory_return_to_depot", True)
     template["energy_model"] = {
         "enabled": _checked(form, "energy_model_enabled", False),
         "payload_kg": _float_field(form, "payload_kg", 0.0, 0.0),
@@ -1073,6 +1087,7 @@ def _page(form=None, results=None, error=None):
         return "selected" if values.get(name) == value else ""
 
     checked = "checked" if values.get("allow_depot_charging") == "on" else ""
+    mandatory_return_checked = "checked" if values.get("mandatory_return_to_depot") == "on" else ""
     break_checked = "checked" if values.get("enable_break") == "on" else ""
     break_billable_checked = "checked" if values.get("break_billable") == "on" else ""
     energy_checked = "checked" if values.get("energy_model_enabled") == "on" else ""
@@ -1634,6 +1649,11 @@ def _page(form=None, results=None, error=None):
         <label>Horizon pad min <input name="horizon_pad_min" type="number" min="0" value="{val('horizon_pad_min')}"></label>
         <label>Depot power kW <input name="depot_power_kw" type="number" min="0" step="0.1" value="{val('depot_power_kw')}"></label>
         <label class="check"><input name="allow_depot_charging" type="checkbox" {checked}> Allow depot charging</label>
+        <label>Service min/customer <input name="service_time_min" type="number" min="0" step="1" value="{val('service_time_min')}"></label>
+        <label>Shift limit min <input name="shift_limit_min" type="number" min="0" step="1" value="{val('shift_limit_min')}"></label>
+        <label>Queue wait min <input name="charger_queue_wait_min" type="number" min="0" step="1" value="{val('charger_queue_wait_min')}"></label>
+        <label>Required plug type <input name="required_plug_type" type="text" value="{val('required_plug_type')}" placeholder="CCS, J1772"></label>
+        <label class="check wide"><input name="mandatory_return_to_depot" type="checkbox" {mandatory_return_checked}> Mandatory return to depot</label>
       </fieldset>
       <button type="submit">Run Planner</button>
     </form>

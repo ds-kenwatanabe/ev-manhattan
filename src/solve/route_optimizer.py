@@ -214,12 +214,14 @@ def optimize_routes(
         return build_nearest_neighbor_routes(inst["depot"], selected_customers, vehicle_ids, customers_per_vehicle)
     if mode == "vrptw_ortools":
         capacities = [float(vehicle_specs.get(vid, {}).get("cap_kg", 10 ** 9)) for vid in vehicle_ids]
+        service_minutes = int(next(iter(vehicle_specs.values()), {}).get("service_time_min", 5) or 0)
         return build_ortools_vrptw_routes(
             inst["depot"],
             selected_customers,
             vehicle_ids,
             customers_per_vehicle,
             vehicle_capacities=capacities,
+            service_minutes=service_minutes,
         )
     return build_charging_aware_routes(
         inst["depot"],

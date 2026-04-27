@@ -134,6 +134,8 @@ Driving energy value + Recharge cost
 
 `End SoC` is the remaining battery energy in kWh at the last reached stop.
 
+`Service min/customer`, `Shift limit min`, `Queue wait min`, `Required plug type`, `Mandatory return to depot`, and `Reserve kWh` are hard planning constraints. A route can end partially if any one of them prevents the next stop.
+
 `Elapsed time` is:
 
 ```text

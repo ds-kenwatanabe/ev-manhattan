@@ -176,6 +176,20 @@ def _charge_sites_from(
     return sites
 
 
+def _charger_matches(row, required_plug_type: str) -> bool:
+    plugs = row.get("plugs", 1)
+    try:
+        if int(plugs) <= 0:
+            return False
+    except (TypeError, ValueError):
+        return False
+    if required_plug_type:
+        plug_type = str(row.get("plug_type", row.get("connection_type", ""))).lower()
+        if required_plug_type.lower() not in plug_type:
+            return False
+    return True
+
+
 def _drive_leg(
         G: nx.MultiDiGraph,
         origin: Dict,
@@ -439,9 +453,16 @@ def plan_route_with_charging(
         depot_power_kw: float = 11.0,
 ):
     inst = _load_instance(instance_json)
+    depot_id = inst["depot"]["id"]
+    if bool(vehicle_spec.get("mandatory_return_to_depot", True)) and route_ids_in_order:
+        if route_ids_in_order[-1] != depot_id:
+            route_ids_in_order = list(route_ids_in_order) + [depot_id]
     custs = {c["cust_id"]: (c["lat"], c["lon"]) for c in inst["customers"]}
+    customer_meta = {c["cust_id"]: c for c in inst["customers"]}
     depot = (inst["depot"]["lat"], inst["depot"]["lon"])
-    day_end_min = int(inst["depot"].get("end_min", 24 * 60))
+    depot_end_min = int(inst["depot"].get("end_min", 24 * 60))
+    shift_limit_min = int(vehicle_spec.get("shift_limit_min", 0) or 0)
+    day_end_min = min(depot_end_min, int(start_minute) + shift_limit_min) if shift_limit_min > 0 else depot_end_min
     G = _load_graph()
 
     def id2latlon(i: str) -> Dict[str, float]:
@@ -463,7 +484,10 @@ def plan_route_with_charging(
 
     ch = pd.DataFrame(inst["chargers"])
     if ch.empty:
-        ch = pd.DataFrame(columns=["id", "name", "lat", "lon", "power_kw", "plugs"])
+        ch = pd.DataFrame(columns=["id", "name", "lat", "lon", "power_kw", "plugs", "plug_type"])
+    required_plug_type = str(vehicle_spec.get("required_plug_type", "") or "").strip()
+    if not ch.empty:
+        ch = ch[ch.apply(lambda row: _charger_matches(row, required_plug_type), axis=1)].reset_index(drop=True)
 
     energy_model = model_from_vehicle_spec(vehicle_spec)
     soc_max = usable_battery_kwh(float(vehicle_spec["battery_kwh"]), energy_model)
@@ -472,18 +496,40 @@ def plan_route_with_charging(
     soc = soc_max * initial_soc_pct
     cons = float(vehicle_spec["cons_kwh_per_km"])
     reserve_kwh = max(0.0, float(vehicle_spec.get("reserve_kwh", 0.0)))
+    service_time_min = max(0, int(vehicle_spec.get("service_time_min", inst.get("service_time_min", 0)) or 0))
+    queue_wait_min = max(0, int(vehicle_spec.get("charger_queue_wait_min", 0) or 0))
+    cap_kg = float(vehicle_spec.get("cap_kg", float("inf")))
+    route_demand_kg = sum(float(customer_meta[cid].get("demand_kg", 0.0)) for cid in route_ids_in_order if cid in customer_meta)
+    if route_demand_kg > cap_kg + 1e-6:
+        return {
+            "timeline": [(route_ids_in_order[0] if route_ids_in_order else depot_id, int(start_minute), soc, 0.0)],
+            "end_soc": soc,
+            "total_energy_cost": 0.0,
+            "end_time": int(start_minute),
+            "completed": False,
+            "completion_reason": "capacity",
+            "completed_route_ids": [route_ids_in_order[0]] if route_ids_in_order else [],
+            "remaining_route_ids": route_ids_in_order[1:] if route_ids_in_order else [],
+        }
 
-    def charge_here(location: Dict, minute: int, start_soc: float, start_cost: float):
+    def charge_here(location: Dict, minute: int, start_soc: float, start_cost: float, target_soc: float):
         power_kw = float(location.get("power_kw", depot_power_kw if location["id"] == inst["depot"]["id"] else 7.2))
         path = []
         soc_now = start_soc
         cost_now = start_cost
         t = minute
-        while soc_now < soc_max - 1e-6:
+        target_soc = max(start_soc, min(soc_max, target_soc))
+        if queue_wait_min > 0 and location["id"].startswith("CH"):
+            wait_end = t + queue_wait_min
+            if wait_end > day_end_min:
+                return path, soc_now, t, cost_now
+            path.append((location["id"], wait_end, soc_now, cost_now))
+            t = wait_end
+        while soc_now < target_soc - 1e-6:
             if t + dt > day_end_min:
                 break
             t2 = t + dt
-            gain = min(soc_max - soc_now, power_kw * (dt / 60.0))
+            gain = min(target_soc - soc_now, power_kw * (dt / 60.0))
             if gain <= 1e-9:
                 break
             price = _price_at_minute(inst["prices_hourly"], t)
@@ -492,6 +538,29 @@ def plan_route_with_charging(
             path.append((location["id"], t2, soc_now, cost_now))
             t = t2
         return path, soc_now, t, cost_now
+
+    def apply_customer_time_constraints(customer_id: str, minute: int, soc_now: float, cost_now: float):
+        if customer_id not in customer_meta:
+            return [], minute, True
+        customer = customer_meta[customer_id]
+        rows = []
+        tw_start = int(customer.get("tw_start_min", 0))
+        tw_end = int(customer.get("tw_end_min", 24 * 60))
+        t = minute
+        if t < tw_start:
+            if tw_start > day_end_min:
+                return rows, t, False
+            rows.append((customer_id, tw_start, soc_now, cost_now))
+            t = tw_start
+        if t > tw_end:
+            return rows, t, False
+        if service_time_min > 0:
+            service_end = t + service_time_min
+            if service_end > tw_end or service_end > day_end_min:
+                return rows, t, False
+            rows.append((customer_id, service_end, soc_now, cost_now))
+            t = service_end
+        return rows, t, True
 
     completed = True
     completion_reason = "completed"
@@ -529,12 +598,27 @@ def plan_route_with_charging(
             cur_start = arrive
             current_id = target_id
             current_loc = B
+            constraint_rows, constrained_time, ok = apply_customer_time_constraints(target_id, cur_start, soc, total_cost)
+            if not ok:
+                completed = False
+                completion_reason = "time_window"
+                break
+            if constraint_rows:
+                timeline.extend(constraint_rows)
+                cur_start = constrained_time
             completed_route_ids.append(target_id)
             target_index += 1
             continue
 
-        if current_id.startswith("CH") or (allow_depot_charging and current_id == inst["depot"]["id"]):
-            charge_rows, charged_soc, charge_end, charged_cost = charge_here(current_loc, cur_start, soc, total_cost)
+        charge_target = min(soc_max, drive_energy + needed_after_arrival)
+        if (current_id.startswith("CH") or (allow_depot_charging and current_id == inst["depot"]["id"])) and soc < charge_target - 1e-6:
+            charge_rows, charged_soc, charge_end, charged_cost = charge_here(
+                current_loc,
+                cur_start,
+                soc,
+                total_cost,
+                charge_target,
+            )
             if not charge_rows or charged_soc <= soc + 1e-6:
                 completed = False
                 completion_reason = "time"
