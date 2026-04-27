@@ -5,6 +5,8 @@ from typing import Dict, Iterable, List
 
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 
+from src.metrics.energy import kwh_needed, model_from_vehicle_spec, usable_battery_kwh
+
 
 def haversine_km(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
     radius_km = 6371.0
@@ -168,7 +170,8 @@ def build_charging_aware_routes(
 
     for vehicle_id in vehicle_ids:
         spec = vehicle_specs.get(vehicle_id, {})
-        cap = float(spec.get("battery_kwh", 0.0) or 0.0)
+        energy_model = model_from_vehicle_spec(spec)
+        cap = usable_battery_kwh(float(spec.get("battery_kwh", 0.0) or 0.0), energy_model)
         soc = cap * float(spec.get("initial_soc_pct", 1.0) or 0.0)
         reserve = float(spec.get("reserve_kwh", 0.0) or 0.0)
         cons = float(spec.get("cons_kwh_per_km", 0.2) or 0.2)
@@ -178,11 +181,12 @@ def build_charging_aware_routes(
         for _ in range(customers_per_vehicle):
             if not remaining:
                 break
-            next_customer = _best_ev_customer(current, remaining, charge_sites, soc, cap, reserve, cons)
+            next_customer = _best_ev_customer(current, remaining, charge_sites, soc, cap, reserve, cons, energy_model)
             route.append(next_customer["cust_id"])
-            soc -= haversine_km(current["lat"], current["lon"], next_customer["lat"], next_customer["lon"]) * cons
+            drive_km = haversine_km(current["lat"], current["lon"], next_customer["lat"], next_customer["lon"])
+            soc -= kwh_needed(drive_km, cons, energy_model)
             if cap > 0 and charge_sites:
-                nearest_charge_kwh = _nearest_charge_kwh(next_customer, charge_sites, cons)
+                nearest_charge_kwh = _nearest_charge_kwh(next_customer, charge_sites, cons, energy_model)
                 if soc < reserve + nearest_charge_kwh:
                     soc = cap
             current = next_customer
@@ -237,11 +241,11 @@ def _charge_sites(depot: Dict, chargers: List[Dict], include_depot: bool) -> Lis
     return sites
 
 
-def _nearest_charge_kwh(location: Dict, charge_sites: List[Dict], cons_kwh_per_km: float) -> float:
+def _nearest_charge_kwh(location: Dict, charge_sites: List[Dict], cons_kwh_per_km: float, energy_model=None) -> float:
     if not charge_sites:
         return 0.0
     km = min(haversine_km(location["lat"], location["lon"], site["lat"], site["lon"]) for site in charge_sites)
-    return km * cons_kwh_per_km
+    return kwh_needed(km, cons_kwh_per_km, energy_model)
 
 
 def _best_ev_customer(
@@ -252,11 +256,12 @@ def _best_ev_customer(
         battery_kwh: float,
         reserve_kwh: float,
         cons_kwh_per_km: float,
+        energy_model=None,
 ) -> Dict:
     def score(customer: Dict) -> tuple:
         drive_km = haversine_km(current["lat"], current["lon"], customer["lat"], customer["lon"])
-        drive_kwh = drive_km * cons_kwh_per_km
-        nearest_charge_kwh = _nearest_charge_kwh(customer, charge_sites, cons_kwh_per_km)
+        drive_kwh = kwh_needed(drive_km, cons_kwh_per_km, energy_model)
+        nearest_charge_kwh = _nearest_charge_kwh(customer, charge_sites, cons_kwh_per_km, energy_model)
         needed = reserve_kwh + nearest_charge_kwh
         after_arrival = soc_kwh - drive_kwh
         recharge_penalty = 0 if after_arrival >= needed else battery_kwh + max(0.0, needed - after_arrival)

@@ -105,6 +105,15 @@ def _default_form():
         "initial_soc_pct": "1.0",
         "reserve_kwh": "0.0",
         "cons_kwh_per_km": str(vehicle["cons_kwh_per_km"]),
+        "energy_model_enabled": "off",
+        "payload_kg": "0",
+        "stop_density_per_km": "2.0",
+        "stop_go_penalty_per_stop": "0.008",
+        "ambient_temp_c": "20",
+        "hvac_penalty_per_deg_c": "0.006",
+        "speed_penalty_factor": "0.35",
+        "regen_credit": "0.08",
+        "battery_degradation_pct": "0.0",
         "cap_kg": str(vehicle["cap_kg"]),
         "dt": "10",
         "horizon_pad_min": "240",
@@ -926,6 +935,22 @@ def _make_instance(base_inst, form):
     template["initial_soc_pct"] = _float_field(form, "initial_soc_pct", 1.0, 0.0, 1.0)
     template["reserve_kwh"] = _float_field(form, "reserve_kwh", 0.0, 0.0)
     template["cons_kwh_per_km"] = _float_field(form, "cons_kwh_per_km", template["cons_kwh_per_km"], 0.01)
+    template["energy_model"] = {
+        "enabled": _checked(form, "energy_model_enabled", False),
+        "payload_kg": _float_field(form, "payload_kg", 0.0, 0.0),
+        "payload_penalty_per_100kg": 0.015,
+        "stop_density_per_km": _float_field(form, "stop_density_per_km", 2.0, 0.0),
+        "stop_go_penalty_per_stop": _float_field(form, "stop_go_penalty_per_stop", 0.008, 0.0),
+        "ambient_temp_c": _float_field(form, "ambient_temp_c", 20.0),
+        "comfort_temp_c": 20.0,
+        "hvac_penalty_per_deg_c": _float_field(form, "hvac_penalty_per_deg_c", 0.006, 0.0),
+        "speed_reference_kmph": 30.0,
+        "speed_penalty_factor": _float_field(form, "speed_penalty_factor", 0.35, 0.0),
+        "regen_credit": _float_field(form, "regen_credit", 0.08, 0.0, 0.18),
+        "max_regen_credit": 0.18,
+        "battery_degradation_pct": _float_field(form, "battery_degradation_pct", 0.0, 0.0, 0.95),
+    }
+    run_config["energy_model"] = dict(template["energy_model"])
     template["cap_kg"] = _float_field(form, "cap_kg", template["cap_kg"], 0.0)
     template["depot"] = inst["depot"]["id"]
 
@@ -1050,6 +1075,7 @@ def _page(form=None, results=None, error=None):
     checked = "checked" if values.get("allow_depot_charging") == "on" else ""
     break_checked = "checked" if values.get("enable_break") == "on" else ""
     break_billable_checked = "checked" if values.get("break_billable") == "on" else ""
+    energy_checked = "checked" if values.get("energy_model_enabled") == "on" else ""
     selector_inst = copy.deepcopy(_load_base_instance())
     selector_inst["customers"] = _generate_customer_pool(_int_field({k: [v] for k, v in values.items()}, "available_customer_count", 150, 1, 1000))
     selection_map = _selection_map_html(selector_inst, values)
@@ -1066,11 +1092,14 @@ def _page(form=None, results=None, error=None):
             first_map = result["maps"][0]["path"]
             routes = html.escape(json.dumps(result["routes"], indent=2))
             config = result["run_config"]
+            energy_model = config.get("energy_model", {})
+            energy_label = "Realistic" if energy_model.get("enabled") else "Simple"
             config_html = f"""
                 <div class="run-config">
                   <span>Day <strong>{html.escape(config['day'])}</strong></span>
                   <span>Price source <strong>{html.escape(config['price_source'])}</strong></span>
                   <span>Optimizer <strong>{html.escape(config.get('optimizer_label', _optimizer_label('evrptw_greedy')))}</strong></span>
+                  <span>Energy model <strong>{energy_label}</strong></span>
                   <span>Avg price <strong>${config['avg_price']:.3f}/kWh</strong></span>
                   <span>Price range <strong>${config['min_price']:.3f}-${config['max_price']:.3f}/kWh</strong></span>
                   <span>Chargers available <strong>{config['charger_count']}</strong></span>
@@ -1579,6 +1608,18 @@ def _page(form=None, results=None, error=None):
         <label>Reserve kWh <input name="reserve_kwh" type="number" min="0" step="0.1" value="{val('reserve_kwh')}"></label>
         <label>kWh per km <input name="cons_kwh_per_km" type="number" min="0.01" step="0.01" value="{val('cons_kwh_per_km')}"></label>
         <label class="wide">Capacity kg <input name="cap_kg" type="number" min="0" step="1" value="{val('cap_kg')}"></label>
+      </fieldset>
+      <fieldset>
+        <legend>Energy Realism</legend>
+        <label class="check wide"><input name="energy_model_enabled" type="checkbox" {energy_checked}> Use realistic energy modifiers</label>
+        <label>Payload kg <input name="payload_kg" type="number" min="0" step="1" value="{val('payload_kg')}"></label>
+        <label>Stops per km <input name="stop_density_per_km" type="number" min="0" step="0.1" value="{val('stop_density_per_km')}"></label>
+        <label>Stop penalty <input name="stop_go_penalty_per_stop" type="number" min="0" step="0.001" value="{val('stop_go_penalty_per_stop')}"></label>
+        <label>Ambient C <input name="ambient_temp_c" type="number" step="0.5" value="{val('ambient_temp_c')}"></label>
+        <label>HVAC / deg <input name="hvac_penalty_per_deg_c" type="number" min="0" step="0.001" value="{val('hvac_penalty_per_deg_c')}"></label>
+        <label>Speed penalty <input name="speed_penalty_factor" type="number" min="0" step="0.01" value="{val('speed_penalty_factor')}"></label>
+        <label>Regen credit <input name="regen_credit" type="number" min="0" max="0.18" step="0.01" value="{val('regen_credit')}"></label>
+        <label>Battery degradation <input name="battery_degradation_pct" type="number" min="0" max="0.95" step="0.01" value="{val('battery_degradation_pct')}"></label>
       </fieldset>
       <fieldset>
         <legend>Planner</legend>

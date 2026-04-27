@@ -62,7 +62,8 @@ Driving:
 - Road distance comes from shortest paths on `data/processed/manhattan_drive.graphml`.
 - Origins and destinations are snapped to the nearest OSM graph nodes.
 - Shortest paths minimize OSM edge `length` in meters on the directed road graph, with an undirected fallback when a directed path is unavailable.
-- Driving energy is `distance_km * cons_kwh_per_km`.
+- Simple driving energy is `distance_km * cons_kwh_per_km`.
+- Optional realistic energy modifiers add payload, stop-and-go, temperature/HVAC, speed, regenerative braking, and usable battery degradation effects.
 - SoC after a drive is `previous_soc_kwh - driving_energy_kwh`.
 - Travel time is `(distance_km / speed_kmph) * 60`, rounded up to the `dt` grid.
 - Speed starts at `30 km/h` and is reduced by the traffic multiplier in `src/sim/traffic.py`.
@@ -91,6 +92,20 @@ Reporting:
 - `Recharge cost` is actual cost paid during charging.
 - `Driving energy value` estimates the value of consumed driving energy using the hourly price at drive departure time.
 - `Estimated energy cost` is `Driving energy value + Recharge cost`.
+
+Realistic energy model:
+
+```text
+base_kwh = distance_km * cons_kwh_per_km
+modifier = 1
+  + payload_kg / 100 * payload_penalty_per_100kg
+  + distance_km * stop_density_per_km * stop_go_penalty_per_stop
+  + abs(ambient_temp_c - comfort_temp_c) * hvac_penalty_per_deg_c
+  + abs(speed_kmph - speed_reference_kmph) / speed_reference_kmph * speed_penalty_factor
+
+driving_kwh = base_kwh * modifier * (1 - regen_credit)
+usable_battery_kwh = battery_kwh * (1 - battery_degradation_pct)
+```
 
 ## Quick Start
 

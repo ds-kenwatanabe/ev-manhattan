@@ -7,6 +7,7 @@ import osmnx as ox
 import networkx as nx
 import json
 import math
+from src.metrics.energy import EnergyModel, kwh_needed, model_from_vehicle_spec, usable_battery_kwh
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
@@ -82,11 +83,14 @@ def _haversine_km(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> flo
 
 
 def _travel_minutes(km: float, minute: int, dt: int, base_speed_kmph: float = 30.0) -> int:
+    return _snap_up_to_grid(int(math.ceil((km / _speed_kmph(minute, base_speed_kmph)) * 60.0)), dt)
+
+
+def _speed_kmph(minute: int, base_speed_kmph: float = 30.0) -> float:
     from src.sim.traffic import speed_multiplier
 
     mult = speed_multiplier(minute % (24 * 60))
-    speed = max(5.0, base_speed_kmph * mult)
-    return _snap_up_to_grid(int(math.ceil((km / speed) * 60.0)), dt)
+    return max(5.0, base_speed_kmph * mult)
 
 
 def _minute_to_hour_idx(minute: int) -> int:
@@ -181,11 +185,12 @@ def _drive_leg(
         cost: float,
         cons_kwh_per_km: float,
         dt: int,
+        energy_model: EnergyModel | None = None,
 ) -> Tuple[Tuple[str, int, float, float], float, int]:
     na = _nearest_node(G, float(origin["lat"]), float(origin["lon"]))
     nb = _nearest_node(G, float(destination["lat"]), float(destination["lon"]))
     km = _shortest_km(G, na, nb)
-    energy = km * cons_kwh_per_km
+    energy = kwh_needed(km, cons_kwh_per_km, energy_model, speed_kmph=_speed_kmph(minute))
     arrive = minute + _travel_minutes(km, minute, dt)
     return (destination["id"], arrive, soc - energy, cost), energy, arrive
 
@@ -460,11 +465,11 @@ def plan_route_with_charging(
     if ch.empty:
         ch = pd.DataFrame(columns=["id", "name", "lat", "lon", "power_kw", "plugs"])
 
-    soc_max = float(vehicle_spec["battery_kwh"])
+    energy_model = model_from_vehicle_spec(vehicle_spec)
+    soc_max = usable_battery_kwh(float(vehicle_spec["battery_kwh"]), energy_model)
     initial_soc_pct = float(vehicle_spec.get("initial_soc_pct", 1.0))
     initial_soc_pct = max(0.0, min(1.0, initial_soc_pct))
     soc = soc_max * initial_soc_pct
-    soc_max = float(vehicle_spec["battery_kwh"])
     cons = float(vehicle_spec["cons_kwh_per_km"])
     reserve_kwh = max(0.0, float(vehicle_spec.get("reserve_kwh", 0.0)))
 
@@ -510,9 +515,10 @@ def plan_route_with_charging(
         nearest_charge = _best_charge_site_from(inst, G, B, ch, include_depot=allow_depot_charging)
         needed_after_arrival = reserve_kwh
         if target_id != inst["depot"]["id"] and nearest_charge is not None:
-            needed_after_arrival = min(soc_max, max(needed_after_arrival, nearest_charge["km"] * cons))
+            nearest_charge_kwh = kwh_needed(nearest_charge["km"], cons, energy_model, speed_kmph=_speed_kmph(cur_start))
+            needed_after_arrival = min(soc_max, max(needed_after_arrival, nearest_charge_kwh))
 
-        drive_row, drive_energy, arrive = _drive_leg(G, current_loc, B, cur_start, soc, total_cost, cons, dt)
+        drive_row, drive_energy, arrive = _drive_leg(G, current_loc, B, cur_start, soc, total_cost, cons, dt, energy_model)
         if arrive > day_end_min:
             completed = False
             completion_reason = "time"
@@ -543,7 +549,7 @@ def plan_route_with_charging(
         for site in _charge_sites_from(inst, G, current_loc, ch, include_depot=allow_depot_charging)[:60]:
             if site["id"] == current_id:
                 continue
-            energy_to_site = site["km"] * cons
+            energy_to_site = kwh_needed(site["km"], cons, energy_model, speed_kmph=_speed_kmph(cur_start))
             if soc - energy_to_site >= reserve_kwh - 1e-6:
                 reachable_sites.append(site)
         if not reachable_sites:
@@ -554,7 +560,7 @@ def plan_route_with_charging(
         charge_row = None
         charge_arrive = None
         for site in reachable_sites:
-            candidate_row, _, candidate_arrive = _drive_leg(G, current_loc, site, cur_start, soc, total_cost, cons, dt)
+            candidate_row, _, candidate_arrive = _drive_leg(G, current_loc, site, cur_start, soc, total_cost, cons, dt, energy_model)
             if candidate_row[2] >= reserve_kwh - 1e-6:
                 charge_site = site
                 charge_row = candidate_row

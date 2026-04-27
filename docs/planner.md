@@ -159,6 +159,23 @@ Driving energy is calculated per road-network drive leg:
 driving_kwh = distance_km * cons_kwh_per_km
 ```
 
+This is the default simple model. The browser can also enable a realistic energy model for Manhattan-style operation:
+
+```text
+base_kwh = distance_km * cons_kwh_per_km
+
+modifier = 1
+  + payload_kg / 100 * payload_penalty_per_100kg
+  + distance_km * stop_density_per_km * stop_go_penalty_per_stop
+  + abs(ambient_temp_c - comfort_temp_c) * hvac_penalty_per_deg_c
+  + abs(speed_kmph - speed_reference_kmph) / speed_reference_kmph * speed_penalty_factor
+
+driving_kwh = base_kwh * modifier * (1 - regen_credit)
+usable_battery_kwh = battery_kwh * (1 - battery_degradation_pct)
+```
+
+The stop-and-go term is intentionally tied to `distance_km * stop_density_per_km` because Manhattan routes are dominated by intersections, curb stops, and congestion rather than steady highway cruising. Regenerative braking is modeled as a bounded credit, not free energy; the browser caps it at 18 percent.
+
 The vehicle's SoC is updated as:
 
 ```text

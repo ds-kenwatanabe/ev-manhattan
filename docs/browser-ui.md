@@ -118,6 +118,8 @@ On the map, recharge stops are green numbered markers.
 sum(distance_km * kWh_per_km for each drive leg)
 ```
 
+When `Use realistic energy modifiers` is enabled, this value also includes payload, stop-and-go density, ambient temperature/HVAC, speed-dependent consumption, regenerative braking credit, and battery degradation. Battery degradation reduces usable capacity before planning starts.
+
 `Charged` is the total kWh added at public chargers or depot charging.
 
 `Driving energy value` estimates the value of the consumed driving energy using the hourly price at each drive departure time.
