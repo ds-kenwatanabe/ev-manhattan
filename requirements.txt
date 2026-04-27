@@ -1,0 +1,12 @@
+folium
+geopandas
+networkx
+numpy
+ortools
+osmnx
+pandas
+pyarrow
+pytest
+python-dotenv
+requests
+shapely

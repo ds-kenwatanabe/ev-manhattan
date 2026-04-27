@@ -1,0 +1,16 @@
+.env
+.venv/
+.idea/
+.pytest_cache/
+
+__pycache__/
+*.py[cod]
+
+data/cache/
+data/outputs/
+data/raw/
+data/processed/*.html
+
+src/cache/
+src/data/
+src/run/data/outputs/
