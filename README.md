@@ -18,17 +18,19 @@ The current workflow is interactive: start the web app, choose the depot/custome
 - Stops a vehicle only when the configured time window is exceeded.
 - Shows completed stops, recharge stops, remaining stops, and route maps in the browser.
 
-## Current Route Algorithm
+## Current Route Optimizers
 
-The browser planner uses a fast charging-aware greedy heuristic. It is not a full global VRP optimizer. The customer order is created first, then the EV planner follows that order and inserts charging stops when needed.
+The browser planner supports multiple route-ordering modes. The selected route order is passed to the EV feasibility layer, which inserts charging stops and stops only when the time window is exceeded or no reachable charger exists.
 
-Customer order:
+Optimizer modes:
 
-- Manual customers: selected on the map, then ordered with nearest-neighbor from the depot.
-- Random customers: sampled from the generated customer pool, then ordered with nearest-neighbor.
-- Multiple vehicles: ordered customers are split across vehicles.
+- `Main: EVRPTW charging-aware order`: chooses customers while considering battery, reserve, and distance to reachable charging sites.
+- `Baseline 1: nearest-neighbor + charging insertion`: orders customers geographically, then inserts chargers afterward.
+- `Baseline 2: OR-Tools VRPTW without EV`: uses OR-Tools for capacity/time-window route ordering, then applies EV charging feasibility afterward.
 
-EV route loop:
+This is still heuristic, not a full mixed-integer global EVRPTW solver. The important improvement is that the main mode no longer treats customer order as completely independent from charging access.
+
+EV feasibility loop:
 
 1. Start at the depot with `Battery kWh * Initial SoC %`.
 2. For the next planned stop, calculate road-network distance using the Manhattan OSM graph.
@@ -127,6 +129,7 @@ Main controls:
 - `Customer selection`: random customers or choose customers on the map.
 - `Available customers`: size of the customer pool shown in the selector.
 - `Depot input`: typed coordinates or choose on map.
+- `Optimizer`: EV-aware main model or baseline comparison modes.
 - `Day`: selected planning day.
 - `Price data`: synthetic, NYISO selected day, local July 2025 NYISO file, or flat price.
 - `Min charger kW` and `Max chargers available`: charger filtering.

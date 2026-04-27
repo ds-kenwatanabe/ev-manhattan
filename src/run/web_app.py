@@ -24,6 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.run.plan_day import plan_day
 from src.eval.summarize import grouped_charges, summarize_timeline
 from src.fetch_nyiso import fetch_nyiso_zone_j_day
+from src.solve.route_optimizer import optimize_routes
 from src.viz.map import quick_map
 from src.viz.overlay_plan import overlay_plan
 
@@ -99,6 +100,7 @@ def _default_form():
         "vehicle_count": "2",
         "runs": "1",
         "customers_per_vehicle": "3",
+        "optimizer_mode": "evrptw_greedy",
         "battery_kwh": str(vehicle["battery_kwh"]),
         "initial_soc_pct": "1.0",
         "reserve_kwh": "0.0",
@@ -231,7 +233,15 @@ def _filter_and_rank_chargers(chargers, min_power, limit):
     return selected
 
 
-def _build_routes(inst, vehicle_count, customers_per_vehicle, run_index, form):
+def _build_routes(
+        inst,
+        vehicle_count,
+        customers_per_vehicle,
+        run_index,
+        form,
+        vehicle_specs=None,
+        allow_depot_charging=True,
+):
     customers = inst["customers"]
     if not customers:
         return {}
@@ -249,16 +259,16 @@ def _build_routes(inst, vehicle_count, customers_per_vehicle, run_index, form):
         start = (run_index * total_needed) % len(customers)
         selected = [customers[(start + i) % len(customers)] for i in range(total_needed)]
 
-    selected = _nearest_neighbor_order(inst["depot"], selected)
-    chunks = _split_customers(selected, vehicle_count)
-
-    depot_id = inst["depot"]["id"]
-    routes = {}
-    for idx in range(vehicle_count):
-        chunk = _nearest_neighbor_order(inst["depot"], chunks[idx])
-        vehicle_id = f"V{idx + 1}"
-        routes[vehicle_id] = [depot_id] + [c["cust_id"] for c in chunk] + [depot_id]
-    return routes
+    vehicle_ids = [f"V{idx + 1}" for idx in range(vehicle_count)]
+    return optimize_routes(
+        inst=inst,
+        selected_customers=selected,
+        vehicle_ids=vehicle_ids,
+        customers_per_vehicle=customers_per_vehicle,
+        mode=_field(form, "optimizer_mode", "evrptw_greedy"),
+        vehicle_specs=vehicle_specs or {},
+        allow_depot_charging=allow_depot_charging,
+    )
 
 
 def _location_names(inst):
@@ -721,6 +731,7 @@ def _selection_map_html(inst, values):
 def _apply_day_prices_and_chargers(inst, form):
     day_str = _field(form, "day", inst.get("meta", {}).get("date", "2025-07-15"))
     price_source = _field(form, "price_source", "synthetic")
+    optimizer_mode = _field(form, "optimizer_mode", "evrptw_greedy")
     flat_price = _float_field(form, "flat_price_usd_per_kwh", 0.30, 0.0)
     prices, price_source_label = _prices_for_day(day_str, price_source, flat_price)
 
@@ -742,6 +753,8 @@ def _apply_day_prices_and_chargers(inst, form):
         "day": day_str,
         "price_source": price_source_label,
         "price_source_key": price_source,
+        "optimizer_mode": optimizer_mode,
+        "optimizer_label": _optimizer_label(optimizer_mode),
         "avg_price": sum(prices) / len(prices),
         "min_price": min(prices),
         "max_price": max(prices),
@@ -753,6 +766,15 @@ def _apply_day_prices_and_chargers(inst, form):
         "break_start_min": break_start_min,
         "break_end_min": break_end_min,
     }
+
+
+def _optimizer_label(mode):
+    labels = {
+        "nearest_neighbor": "Baseline 1: nearest-neighbor + charging insertion",
+        "vrptw_ortools": "Baseline 2: OR-Tools VRPTW without EV constraints",
+        "evrptw_greedy": "Main: EVRPTW charging-aware route order",
+    }
+    return labels.get(mode, labels["evrptw_greedy"])
 
 
 def _timeline_stop_ids(timeline):
@@ -935,7 +957,15 @@ def _run_plans(form):
     results = []
 
     for run_index in range(run_count):
-        routes = _build_routes(inst, vehicle_count, customers_per_vehicle, run_index, form)
+        routes = _build_routes(
+            inst,
+            vehicle_count,
+            customers_per_vehicle,
+            run_index,
+            form,
+            vehicle_specs=veh_specs,
+            allow_depot_charging=allow_depot_charging,
+        )
         inst_path = OUTPUT_DIR / f"web_instance_{stamp}_run_{run_index + 1}.json"
         json.dump(inst, open(inst_path, "w"))
         prices_path, prices_parquet_path = _write_daily_price_files(
@@ -1040,6 +1070,7 @@ def _page(form=None, results=None, error=None):
                 <div class="run-config">
                   <span>Day <strong>{html.escape(config['day'])}</strong></span>
                   <span>Price source <strong>{html.escape(config['price_source'])}</strong></span>
+                  <span>Optimizer <strong>{html.escape(config.get('optimizer_label', _optimizer_label('evrptw_greedy')))}</strong></span>
                   <span>Avg price <strong>${config['avg_price']:.3f}/kWh</strong></span>
                   <span>Price range <strong>${config['min_price']:.3f}-${config['max_price']:.3f}/kWh</strong></span>
                   <span>Chargers available <strong>{config['charger_count']}</strong></span>
@@ -1551,6 +1582,13 @@ def _page(form=None, results=None, error=None):
       </fieldset>
       <fieldset>
         <legend>Planner</legend>
+        <label class="wide">Optimizer
+          <select name="optimizer_mode">
+            <option value="evrptw_greedy" {selected('optimizer_mode', 'evrptw_greedy')}>Main: EVRPTW charging-aware order</option>
+            <option value="nearest_neighbor" {selected('optimizer_mode', 'nearest_neighbor')}>Baseline 1: nearest-neighbor + charging insertion</option>
+            <option value="vrptw_ortools" {selected('optimizer_mode', 'vrptw_ortools')}>Baseline 2: OR-Tools VRPTW without EV</option>
+          </select>
+        </label>
         <label>Time step min <input name="dt" type="number" min="1" max="120" value="{val('dt')}"></label>
         <label>Horizon pad min <input name="horizon_pad_min" type="number" min="0" value="{val('horizon_pad_min')}"></label>
         <label>Depot power kW <input name="depot_power_kw" type="number" min="0" step="0.1" value="{val('depot_power_kw')}"></label>

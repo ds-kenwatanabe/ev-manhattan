@@ -26,20 +26,25 @@ For each vehicle, the planner receives a fixed stop order:
 DEPOT1 -> C003 -> C011 -> ... -> DEPOT1
 ```
 
-The current browser workflow builds that order from either random customers or selected map customers.
+The browser workflow builds a customer pool from either random customers or selected map customers, then chooses a route-ordering optimizer.
 
-Customer ordering is handled before the EV energy planner:
+Implemented route-ordering modes:
 
-- Random mode samples customers from the generated customer pool.
-- Manual mode uses the customer IDs selected on the map.
-- The selected customers are ordered with a nearest-neighbor heuristic from the depot.
-- For multiple vehicles, ordered customers are split across vehicles round-robin.
+- `nearest_neighbor`: Baseline 1. Orders customers by nearest-neighbor and then inserts charging stops during EV feasibility.
+- `vrptw_ortools`: Baseline 2. Uses OR-Tools VRPTW with time windows and vehicle capacity, but no battery constraints. EV feasibility is checked afterward.
+- `evrptw_greedy`: Main browser model. Builds route order with battery, reserve, and charger access in the scoring function, then inserts exact charging stops during EV feasibility.
 
-This means the system currently optimizes charging feasibility and reporting around a fixed customer order. It does not solve a global optimal VRP/TSP.
+The main mode is a charging-aware EVRPTW heuristic. It is not yet a full global EVRPTW mixed-integer optimizer or ALNS metaheuristic, but charging access now influences route order before the EV feasibility pass.
 
-## Active Algorithm
+Advanced solver scaffold:
 
-The active browser route planner is a charging-aware greedy heuristic in `plan_route_with_charging`.
+- `rcsp_leg` remains available for label-setting, time-expanded single-leg planning.
+- `plan_route_with_charging` is the active browser feasibility layer because it is much faster for interactive runs.
+- A future ALNS layer can use the current route optimizer module as the destroy/repair interface and call the EV feasibility layer to evaluate candidate route sets.
+
+## Active EV Feasibility Algorithm
+
+The active browser feasibility planner is a charging-aware greedy heuristic in `plan_route_with_charging`.
 
 At each step it tries to advance to the next planned stop. It can insert public charger stops or depot charging, but it does not reorder the remaining customer list.
 
@@ -247,7 +252,7 @@ Common values:
 
 ## Known Limitations
 
-- Customer ordering is simple nearest-neighbor ordering, not a full global optimizer.
+- The main route order is charging-aware, but it is still heuristic rather than a globally optimal EVRPTW solver.
 - Break windows affect reporting and billing, not route feasibility.
 - Charger queue simulation exists as a scaffold, but the browser run currently focuses on route feasibility and charging cost.
 - Charger selection is optimized for interactive speed. It uses fast geographic filtering and road-network distance for actual drive legs.
