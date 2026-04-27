@@ -55,7 +55,24 @@ def _stop_events(timeline, charge_sessions, depot_id):
     return events
 
 
-def overlay_plan(instance_json, plan, out_html=PROCESSED_DIR / "plan_map.html"):
+def _lerp_color(low_hex, high_hex, value):
+    value = max(0.0, min(1.0, float(value)))
+    low = tuple(int(low_hex[i:i + 2], 16) for i in (1, 3, 5))
+    high = tuple(int(high_hex[i:i + 2], 16) for i in (1, 3, 5))
+    rgb = tuple(int(low[i] + (high[i] - low[i]) * value) for i in range(3))
+    return f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+
+
+def _line_color(mode, row, t_min, t_max, soc_max):
+    if mode == "battery":
+        return _lerp_color("#dc2626", "#16a34a", float(row[2]) / max(0.1, float(soc_max)))
+    if mode == "time":
+        span = max(1, int(t_max) - int(t_min))
+        return _lerp_color("#2563eb", "#f97316", (int(row[1]) - int(t_min)) / span)
+    return "#2563eb"
+
+
+def overlay_plan(instance_json, plan, out_html=PROCESSED_DIR / "plan_map.html", color_by="default"):
     inst = json.load(open(instance_json))
     G = ox.load_graphml(PROCESSED_DIR / "manhattan_drive.graphml")
     G = _largest_cc(G)
@@ -76,6 +93,10 @@ def overlay_plan(instance_json, plan, out_html=PROCESSED_DIR / "plan_map.html"):
 
     # draw drives as polylines
     tl = plan["timeline"]
+    t_values = [int(row[1]) for row in tl] or [0]
+    soc_values = [float(row[2]) for row in tl] or [1.0]
+    t_min, t_max = min(t_values), max(t_values)
+    soc_max = max(soc_values)
     stop_order = []
     for i in range(len(tl) - 1):
         a, b = tl[i][0], tl[i + 1][0]
@@ -87,7 +108,13 @@ def overlay_plan(instance_json, plan, out_html=PROCESSED_DIR / "plan_map.html"):
         (alat, alon), (blat, blon) = coords[a], coords[b]
         nodes = _path_nodes(G, alat, alon, blat, blon)
         latlons = [(G.nodes[n]["y"], G.nodes[n]["x"]) for n in nodes]
-        folium.PolyLine(latlons, weight=4, opacity=0.7).add_to(m)
+        folium.PolyLine(
+            latlons,
+            weight=4,
+            opacity=0.78,
+            color=_line_color(color_by, tl[i], t_min, t_max, soc_max),
+            tooltip=f"{a} -> {b} | {_format_minutes(tl[i][1])} | SoC {float(tl[i][2]):.2f} kWh",
+        ).add_to(m)
 
     charges = grouped_charges(tl, depot_id=inst["depot"]["id"])
     stop_events = _stop_events(tl, charges, inst["depot"]["id"])

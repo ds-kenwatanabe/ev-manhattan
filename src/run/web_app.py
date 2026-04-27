@@ -1,5 +1,6 @@
 import argparse
 import copy
+import csv
 import html
 import json
 import math
@@ -101,6 +102,7 @@ def _default_form():
         "runs": "1",
         "customers_per_vehicle": "3",
         "optimizer_mode": "evrptw_greedy",
+        "route_color_by": "battery",
         "service_time_min": "5",
         "shift_limit_min": "0",
         "charger_queue_wait_min": "0",
@@ -274,6 +276,14 @@ def _build_routes(
         selected = [customers[(start + i) % len(customers)] for i in range(total_needed)]
 
     vehicle_ids = [f"V{idx + 1}" for idx in range(vehicle_count)]
+    if _field(form, "optimizer_mode", "evrptw_greedy") == "manual_order":
+        routes = {}
+        depot_id = inst["depot"]["id"]
+        for idx, vehicle_id in enumerate(vehicle_ids):
+            start = idx * customers_per_vehicle
+            chunk = selected[start:start + customers_per_vehicle]
+            routes[vehicle_id] = [depot_id] + [c["cust_id"] for c in chunk] + [depot_id]
+        return routes
     return optimize_routes(
         inst=inst,
         selected_customers=selected,
@@ -544,6 +554,11 @@ def _selection_map_html(inst, values):
           <span id="depot-warning"></span>
           <span id="selector-mode-readout">Modes: coordinates depot / random customers</span>
         </div>
+        <div class="selected-order">
+          <h4>Selected Customer Order</h4>
+          <div id="selected-order-list" class="order-list" aria-label="Selected customer order"></div>
+          <p class="muted">Drag chips to change the manual customer order.</p>
+        </div>
       </section>
       <script>
         (() => {{
@@ -617,11 +632,46 @@ def _selection_map_html(inst, values):
             depotWarning.classList.toggle('warning', Boolean(message));
           }}
 
+          let orderedIds = (selectedInput.value || '').split(',').map(x => x.trim()).filter(Boolean);
+          const orderList = document.getElementById('selected-order-list');
+
           function syncSelected() {{
-            const ids = Array.from(selected).sort();
+            orderedIds = orderedIds.filter(id => selected.has(id));
+            Array.from(selected).forEach(id => {{
+              if (!orderedIds.includes(id)) orderedIds.push(id);
+            }});
+            const ids = orderedIds.slice();
             selectedInput.value = ids.join(',');
             countEl.textContent = `${{ids.length}} customers selected`;
             availableEl.textContent = `${{payload.customers.length}} customers available`;
+            renderOrderList();
+          }}
+
+          function renderOrderList() {{
+            orderList.innerHTML = '';
+            orderedIds.forEach((id) => {{
+              const chip = document.createElement('button');
+              chip.type = 'button';
+              chip.className = 'order-chip';
+              chip.draggable = true;
+              chip.textContent = id;
+              chip.dataset.id = id;
+              chip.addEventListener('dragstart', () => chip.classList.add('dragging'));
+              chip.addEventListener('dragend', () => {{
+                chip.classList.remove('dragging');
+                orderedIds = Array.from(orderList.querySelectorAll('.order-chip')).map(el => el.dataset.id);
+                syncSelected();
+              }});
+              chip.addEventListener('click', () => {{
+                selected.delete(id);
+                orderedIds = orderedIds.filter(x => x !== id);
+                document.querySelectorAll('.customer-marker').forEach(marker => {{
+                  if (marker.title === id) marker.classList.remove('selected');
+                }});
+                syncSelected();
+              }});
+              orderList.appendChild(chip);
+            }});
           }}
 
           function syncDepot(lat, lon) {{
@@ -664,8 +714,13 @@ def _selection_map_html(inst, values):
             el.addEventListener('click', (ev) => {{
               ev.stopPropagation();
               if (customerModeInput.value !== 'manual') return;
-              if (selected.has(customer.id)) selected.delete(customer.id);
-              else selected.add(customer.id);
+              if (selected.has(customer.id)) {{
+                selected.delete(customer.id);
+                orderedIds = orderedIds.filter(id => id !== customer.id);
+              }} else {{
+                selected.add(customer.id);
+                orderedIds.push(customer.id);
+              }}
               style();
               syncSelected();
             }});
@@ -732,6 +787,15 @@ def _selection_map_html(inst, values):
             }}
           }});
           customerModeInput.addEventListener('change', syncModes);
+          orderList.addEventListener('dragover', (ev) => {{
+            ev.preventDefault();
+            const dragging = orderList.querySelector('.dragging');
+            if (!dragging) return;
+            const siblings = Array.from(orderList.querySelectorAll('.order-chip:not(.dragging)'));
+            const after = siblings.find(el => ev.clientX < el.getBoundingClientRect().left + el.offsetWidth / 2);
+            if (after) orderList.insertBefore(dragging, after);
+            else orderList.appendChild(dragging);
+          }});
           syncSelected();
           syncModes();
           }} catch (err) {{
@@ -784,6 +848,7 @@ def _apply_day_prices_and_chargers(inst, form):
 
 def _optimizer_label(mode):
     labels = {
+        "manual_order": "Manual customer order + charging insertion",
         "nearest_neighbor": "Baseline 1: nearest-neighbor + charging insertion",
         "vrptw_ortools": "Baseline 2: OR-Tools VRPTW without EV constraints",
         "evrptw_greedy": "Main: EVRPTW charging-aware route order",
@@ -840,6 +905,15 @@ def _vehicle_summary(inst, vehicle_id, route, plan, run_config):
         float(d["energy_kwh"]) * _price_at_minute(inst, d["depart_min"])
         for d in drives
     )
+    timeline_points = [
+        {
+            "time": int(row[1]),
+            "soc": float(row[2]),
+            "cost": float(row[3]),
+            "loc": str(row[0]),
+        }
+        for row in plan["timeline"]
+    ]
 
     route_details = []
     actual_route = _route_events(plan["timeline"], charges, inst["depot"]["id"])
@@ -913,6 +987,7 @@ def _vehicle_summary(inst, vehicle_id, route, plan, run_config):
         "completion_reason": completion_reason,
         "status_text": status_text,
         "remaining_route_ids": list(plan.get("remaining_route_ids", [])),
+        "timeline_points": timeline_points,
         "charges": [
             {
                 "station": _format_location(charge["station_id"], names),
@@ -979,6 +1054,85 @@ def _make_instance(base_inst, form):
     return inst, veh_specs, run_config
 
 
+def _svg_curve(points, value_key, stroke, label):
+    if not points:
+        return "<div class='chart-empty'>No timeline data.</div>"
+    width, height = 420, 150
+    pad_l, pad_r, pad_t, pad_b = 42, 12, 16, 28
+    times = [int(p["time"]) for p in points]
+    values = [float(p[value_key]) for p in points]
+    t_min, t_max = min(times), max(times)
+    v_min, v_max = min(values), max(values)
+    if t_max == t_min:
+        t_max += 1
+    if abs(v_max - v_min) < 1e-9:
+        v_max += 1.0
+        v_min = max(0.0, v_min - 1.0)
+
+    def xy(point):
+        x = pad_l + (int(point["time"]) - t_min) / (t_max - t_min) * (width - pad_l - pad_r)
+        y = pad_t + (v_max - float(point[value_key])) / (v_max - v_min) * (height - pad_t - pad_b)
+        return x, y
+
+    d = " ".join(f"{'M' if idx == 0 else 'L'} {x:.1f} {y:.1f}" for idx, point in enumerate(points) for x, y in [xy(point)])
+    last_value = values[-1]
+    return f"""
+      <figure class="curve">
+        <figcaption>{html.escape(label)} <strong>{last_value:.2f}</strong></figcaption>
+        <svg viewBox="0 0 {width} {height}" role="img" aria-label="{html.escape(label)}">
+          <line x1="{pad_l}" y1="{height - pad_b}" x2="{width - pad_r}" y2="{height - pad_b}" />
+          <line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{height - pad_b}" />
+          <text x="4" y="{pad_t + 4}">{v_max:.1f}</text>
+          <text x="4" y="{height - pad_b}">{v_min:.1f}</text>
+          <text x="{pad_l}" y="{height - 6}">{_format_minutes(t_min)}</text>
+          <text x="{width - 64}" y="{height - 6}">{_format_minutes(t_max)}</text>
+          <path d="{d}" style="stroke:{stroke}" />
+        </svg>
+      </figure>
+    """
+
+
+def _write_summary_csv(stamp, run_number, vehicle_summaries):
+    path = OUTPUT_DIR / f"web_summary_{stamp}_run_{run_number}.csv"
+    fields = [
+        "run",
+        "vehicle",
+        "completed",
+        "infeasibility_reason",
+        "energy_used_kwh",
+        "charged_kwh",
+        "driving_energy_value_usd",
+        "recharge_cost_usd",
+        "estimated_energy_cost_usd",
+        "end_soc_kwh",
+        "end_time",
+        "elapsed_min",
+        "billable_min",
+        "remaining_stops",
+    ]
+    with open(path, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader()
+        for vehicle in vehicle_summaries:
+            writer.writerow({
+                "run": run_number,
+                "vehicle": vehicle["vehicle_id"],
+                "completed": vehicle["completed"],
+                "infeasibility_reason": "" if vehicle["completed"] else vehicle["status_text"],
+                "energy_used_kwh": f"{vehicle['drive_energy_kwh']:.4f}",
+                "charged_kwh": f"{vehicle['charge_energy_kwh']:.4f}",
+                "driving_energy_value_usd": f"{vehicle['drive_energy_cost_usd']:.4f}",
+                "recharge_cost_usd": f"{vehicle['charge_cost_usd']:.4f}",
+                "estimated_energy_cost_usd": f"{vehicle['total_energy_cost']:.4f}",
+                "end_soc_kwh": f"{vehicle['end_soc']:.4f}",
+                "end_time": _format_minutes(vehicle["end_time"]),
+                "elapsed_min": vehicle["elapsed_min"],
+                "billable_min": vehicle["billable_min"],
+                "remaining_stops": " ".join(vehicle["remaining_route_ids"]),
+            })
+    return path
+
+
 def _run_plans(form):
     base_inst = _load_base_instance()
     inst, veh_specs, run_config = _make_instance(base_inst, form)
@@ -990,6 +1144,7 @@ def _run_plans(form):
     horizon_pad_min = _int_field(form, "horizon_pad_min", 240, 0, 24 * 60)
     allow_depot_charging = _checked(form, "allow_depot_charging", True)
     depot_power_kw = _float_field(form, "depot_power_kw", 11.0, 0.0)
+    route_color_by = _field(form, "route_color_by", "battery")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
@@ -1031,13 +1186,14 @@ def _run_plans(form):
 
         for vehicle_id, plan in plans.items():
             map_path = OUTPUT_DIR / f"web_plan_{stamp}_run_{run_index + 1}_{vehicle_id}.html"
-            overlay_plan(str(inst_path), plan, out_html=map_path)
+            overlay_plan(str(inst_path), plan, out_html=map_path, color_by=route_color_by)
             maps.append({"label": vehicle_id, "path": map_path.name})
 
         vehicle_summaries = [
             _vehicle_summary(inst, vehicle_id, routes[vehicle_id], plans[vehicle_id], run_config)
             for vehicle_id in routes
         ]
+        summary_csv_path = _write_summary_csv(stamp, run_index + 1, vehicle_summaries)
 
         results.append({
             "run": run_index + 1,
@@ -1049,6 +1205,7 @@ def _run_plans(form):
             "run_config": run_config,
             "prices_path": prices_path.name,
             "prices_parquet_path": prices_parquet_path.name,
+            "summary_csv_path": summary_csv_path.name,
             "instance_path": inst_path.name,
         })
 
@@ -1079,6 +1236,8 @@ def _page(form=None, results=None, error=None):
             values.pop("enable_break", None)
         if "break_billable" not in form:
             values.pop("break_billable", None)
+        if "mandatory_return_to_depot" not in form:
+            values.pop("mandatory_return_to_depot", None)
 
     def val(name):
         return html.escape(str(values.get(name, "")))
@@ -1099,6 +1258,7 @@ def _page(form=None, results=None, error=None):
         result_html = f"<section class='error'><h2>Error</h2><pre>{html.escape(error)}</pre></section>"
     elif results:
         chunks = []
+        compare_payload = []
         for result in results:
             map_tabs = "".join(
                 f"<a href='/outputs/{html.escape(m['path'])}' target='_blank'>{html.escape(m['label'])}</a>"
@@ -1125,6 +1285,18 @@ def _page(form=None, results=None, error=None):
             """
             vehicles = []
             for vehicle in result["vehicle_summaries"]:
+                compare_payload.append({
+                    "run": result["run"],
+                    "vehicle": vehicle["vehicle_id"],
+                    "label": f"Run {result['run']} {vehicle['vehicle_id']}",
+                    "completed": vehicle["completed"],
+                    "reason": vehicle["status_text"],
+                    "energy": round(vehicle["drive_energy_kwh"], 3),
+                    "charged": round(vehicle["charge_energy_kwh"], 3),
+                    "cost": round(vehicle["total_energy_cost"], 3),
+                    "end_soc": round(vehicle["end_soc"], 3),
+                    "billable": vehicle["billable_min"],
+                })
                 route_rows = "".join(
                     "<tr>"
                     f"<td>{stop['order']}</td>"
@@ -1174,7 +1346,12 @@ def _page(form=None, results=None, error=None):
                           <span>Elapsed time <strong>{vehicle['elapsed_min']} min</strong></span>
                           <span>Break excluded <strong>{vehicle['break_overlap_min']} min</strong></span>
                           <span>Billable time <strong>{vehicle['billable_min']} min</strong></span>
+                          <span>Infeasibility <strong>{html.escape(vehicle['status_text'] if not vehicle['completed'] else 'None')}</strong></span>
                         </div>
+                      </div>
+                      <div class="curves">
+                        {_svg_curve(vehicle['timeline_points'], 'soc', '#0f766e', 'SoC kWh')}
+                        {_svg_curve(vehicle['timeline_points'], 'cost', '#7c3aed', 'Charging cost $')}
                       </div>
                       <div class="vehicle-grid">
                         <div>
@@ -1202,6 +1379,7 @@ def _page(form=None, results=None, error=None):
                         <div class="map-links">{map_tabs}</div>
                     </div>
                     {config_html}
+                    <div class="downloads"><a href="/outputs/{html.escape(result['summary_csv_path'])}" target="_blank">Download CSV summary</a></div>
                     <iframe src="/outputs/{html.escape(first_map)}" title="Run {result['run']} map"></iframe>
                     <div class="vehicles">{vehicle_html}</div>
                     <details>
@@ -1210,7 +1388,22 @@ def _page(form=None, results=None, error=None):
                     </details>
                 </section>
             """)
-        result_html = "\n".join(chunks)
+        compare_json = json.dumps(compare_payload).replace("</script>", "<\\/script>")
+        compare_html = ""
+        if len(compare_payload) >= 2:
+            options = "".join(f"<option value='{idx}'>{html.escape(row['label'])}</option>" for idx, row in enumerate(compare_payload))
+            compare_html = f"""
+              <section class="compare">
+                <h2>Compare Runs</h2>
+                <div class="compare-controls">
+                  <label>Left <select id="compare-left">{options}</select></label>
+                  <label>Right <select id="compare-right">{options}</select></label>
+                </div>
+                <div id="compare-output"></div>
+                <script id="compare-data" type="application/json">{compare_json}</script>
+              </section>
+            """
+        result_html = compare_html + "\n".join(chunks)
 
     return f"""<!doctype html>
 <html lang="en">
@@ -1338,6 +1531,40 @@ def _page(form=None, results=None, error=None):
       padding: 6px 9px;
       background: #f0fbf9;
     }}
+    .downloads {{
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #ffffff;
+    }}
+    .downloads a {{
+      color: var(--accent-dark);
+      font-weight: 700;
+      text-decoration: none;
+    }}
+    .compare {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 16px;
+      margin-bottom: 18px;
+    }}
+    .compare-controls {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(180px, 1fr));
+      gap: 12px;
+      margin: 12px 0;
+    }}
+    .compare-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }}
+    .compare-card {{
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      background: #f8fafc;
+    }}
     .run-config {{
       display: grid;
       grid-template-columns: repeat(7, minmax(130px, 1fr));
@@ -1410,6 +1637,51 @@ def _page(form=None, results=None, error=None):
       display: grid;
       grid-template-columns: minmax(220px, 0.85fr) minmax(320px, 1.15fr);
       gap: 18px;
+    }}
+    .curves {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 12px 0 16px;
+    }}
+    .curve {{
+      margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+      padding: 8px;
+    }}
+    .curve figcaption {{
+      display: flex;
+      justify-content: space-between;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }}
+    .curve svg {{
+      width: 100%;
+      height: 150px;
+      display: block;
+    }}
+    .curve line {{
+      stroke: #cbd5e1;
+      stroke-width: 1;
+    }}
+    .curve path {{
+      fill: none;
+      stroke-width: 3;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+    }}
+    .curve text {{
+      fill: #667085;
+      font-size: 11px;
+    }}
+    .chart-empty {{
+      padding: 12px;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 6px;
     }}
     ol {{
       margin: 0;
@@ -1544,12 +1816,39 @@ def _page(form=None, results=None, error=None):
       font-size: 13px;
       flex-wrap: wrap;
     }}
+    .selected-order {{
+      padding: 10px 16px 14px;
+      border-top: 1px solid var(--line);
+      background: #fbfcfd;
+    }}
+    .order-list {{
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      min-height: 38px;
+      padding: 8px;
+      border: 1px dashed #b6c2cf;
+      border-radius: 6px;
+      background: #fff;
+    }}
+    .order-chip {{
+      border: 1px solid #9cc9c4;
+      border-radius: 6px;
+      background: #edf9f7;
+      color: #0b5f59;
+      padding: 6px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: grab;
+    }}
+    .order-chip.dragging {{ opacity: 0.45; }}
     @media (max-width: 900px) {{
       main {{ grid-template-columns: 1fr; padding: 18px; }}
       header {{ padding: 20px 18px 12px; }}
       .run-config {{ grid-template-columns: repeat(2, minmax(120px, 1fr)); }}
       .metrics {{ grid-template-columns: repeat(2, minmax(120px, 1fr)); }}
       .vehicle-grid {{ grid-template-columns: 1fr; }}
+      .curves, .compare-grid, .compare-controls {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -1641,8 +1940,16 @@ def _page(form=None, results=None, error=None):
         <label class="wide">Optimizer
           <select name="optimizer_mode">
             <option value="evrptw_greedy" {selected('optimizer_mode', 'evrptw_greedy')}>Main: EVRPTW charging-aware order</option>
+            <option value="manual_order" {selected('optimizer_mode', 'manual_order')}>Manual selected order + charging insertion</option>
             <option value="nearest_neighbor" {selected('optimizer_mode', 'nearest_neighbor')}>Baseline 1: nearest-neighbor + charging insertion</option>
             <option value="vrptw_ortools" {selected('optimizer_mode', 'vrptw_ortools')}>Baseline 2: OR-Tools VRPTW without EV</option>
+          </select>
+        </label>
+        <label>Route color
+          <select name="route_color_by">
+            <option value="battery" {selected('route_color_by', 'battery')}>Battery level</option>
+            <option value="time" {selected('route_color_by', 'time')}>Time of day</option>
+            <option value="default" {selected('route_color_by', 'default')}>Single color</option>
           </select>
         </label>
         <label>Time step min <input name="dt" type="number" min="1" max="120" value="{val('dt')}"></label>
@@ -1664,6 +1971,41 @@ def _page(form=None, results=None, error=None):
   </main>
 </body>
 <script>
+  (() => {{
+    const dataEl = document.getElementById('compare-data');
+    if (!dataEl) return;
+    const rows = JSON.parse(dataEl.textContent);
+    const left = document.getElementById('compare-left');
+    const right = document.getElementById('compare-right');
+    const out = document.getElementById('compare-output');
+    if (right && right.options.length > 1) right.selectedIndex = 1;
+    function card(row) {{
+      return `<div class="compare-card">
+        <h3>${{row.label}}</h3>
+        <p><strong>${{row.completed ? 'Completed' : 'Incomplete'}}</strong></p>
+        <p class="muted">${{row.reason}}</p>
+        <table>
+          <tbody>
+            <tr><th>Energy used</th><td>${{row.energy}} kWh</td></tr>
+            <tr><th>Charged</th><td>${{row.charged}} kWh</td></tr>
+            <tr><th>Cost</th><td>$${{row.cost}}</td></tr>
+            <tr><th>End SoC</th><td>${{row.end_soc}} kWh</td></tr>
+            <tr><th>Billable</th><td>${{row.billable}} min</td></tr>
+          </tbody>
+        </table>
+      </div>`;
+    }}
+    function renderCompare() {{
+      const a = rows[Number(left.value || 0)];
+      const b = rows[Number(right.value || 0)];
+      if (!a || !b) return;
+      out.innerHTML = `<div class="compare-grid">${{card(a)}}${{card(b)}}</div>`;
+    }}
+    left.addEventListener('change', renderCompare);
+    right.addEventListener('change', renderCompare);
+    renderCompare();
+  }})();
+
   (() => {{
     const refresh = document.getElementById('refresh-customers-map');
     const available = document.getElementById('available-customer-count');

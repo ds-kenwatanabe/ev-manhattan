@@ -1,6 +1,6 @@
 import pytest
 
-from src.run.web_app import _route_events, _vehicle_summary
+from src.run.web_app import _build_routes, _route_events, _svg_curve, _vehicle_summary, _write_summary_csv
 
 
 @pytest.fixture
@@ -67,3 +67,63 @@ def test_vehicle_summary_formats_recharge_in_stop_order(tiny_instance):
     assert "2.00 kWh" in recharge_row["note"]
     assert "$0.50" in recharge_row["note"]
     assert summary["charges"][0]["station"] == "CH10 - Fast Charger"
+
+
+def test_svg_curve_renders_timeline_path():
+    html = _svg_curve(
+        [{"time": 480, "soc": 5.0, "cost": 0.0}, {"time": 540, "soc": 3.5, "cost": 1.2}],
+        "soc",
+        "#0f766e",
+        "SoC kWh",
+    )
+
+    assert "<svg" in html
+    assert "SoC kWh" in html
+    assert "<path" in html
+
+
+def test_summary_csv_export(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.run.web_app.OUTPUT_DIR", tmp_path)
+    path = _write_summary_csv(
+        "stamp",
+        1,
+        [{
+            "vehicle_id": "V1",
+            "completed": False,
+            "status_text": "Did not complete route in the given time",
+            "drive_energy_kwh": 2.0,
+            "charge_energy_kwh": 1.0,
+            "drive_energy_cost_usd": 0.5,
+            "charge_cost_usd": 0.25,
+            "total_energy_cost": 0.75,
+            "end_soc": 3.0,
+            "end_time": 540,
+            "elapsed_min": 60,
+            "billable_min": 50,
+            "remaining_route_ids": ["C002"],
+        }],
+    )
+
+    text = path.read_text()
+    assert "infeasibility_reason" in text
+    assert "Did not complete route in the given time" in text
+
+
+def test_manual_order_optimizer_preserves_dragged_selection_order():
+    inst = {
+        "depot": {"id": "DEPOT1", "lat": 40.0, "lon": -73.0},
+        "customers": [
+            {"cust_id": "C000", "lat": 40.0, "lon": -73.0},
+            {"cust_id": "C001", "lat": 40.1, "lon": -73.0},
+            {"cust_id": "C002", "lat": 40.2, "lon": -73.0},
+        ],
+    }
+    form = {
+        "customer_selection": ["manual"],
+        "optimizer_mode": ["manual_order"],
+        "selected_customer_ids": ["C002,C000,C001"],
+    }
+
+    routes = _build_routes(inst, vehicle_count=1, customers_per_vehicle=3, run_index=0, form=form)
+
+    assert routes["V1"] == ["DEPOT1", "C002", "C000", "C001", "DEPOT1"]
