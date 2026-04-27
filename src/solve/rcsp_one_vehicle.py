@@ -8,9 +8,11 @@ import networkx as nx
 import json
 import math
 from src.metrics.energy import EnergyModel, kwh_needed, model_from_vehicle_spec, usable_battery_kwh
+from src.metrics.time_dependent import TimeDependentTravelMatrix, shortest_path_km, speed_kmph, travel_minutes_for_departure
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
+CACHE_DIR = PROJECT_ROOT / "data" / "cache"
 
 
 # Data types
@@ -83,14 +85,11 @@ def _haversine_km(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> flo
 
 
 def _travel_minutes(km: float, minute: int, dt: int, base_speed_kmph: float = 30.0) -> int:
-    return _snap_up_to_grid(int(math.ceil((km / _speed_kmph(minute, base_speed_kmph)) * 60.0)), dt)
+    return travel_minutes_for_departure(km, minute, dt, base_speed_kmph)
 
 
 def _speed_kmph(minute: int, base_speed_kmph: float = 30.0) -> float:
-    from src.sim.traffic import speed_multiplier
-
-    mult = speed_multiplier(minute % (24 * 60))
-    return max(5.0, base_speed_kmph * mult)
+    return speed_kmph(minute, base_speed_kmph)
 
 
 def _minute_to_hour_idx(minute: int) -> int:
@@ -200,12 +199,17 @@ def _drive_leg(
         cons_kwh_per_km: float,
         dt: int,
         energy_model: EnergyModel | None = None,
+        travel_matrix: TimeDependentTravelMatrix | None = None,
 ) -> Tuple[Tuple[str, int, float, float], float, int]:
-    na = _nearest_node(G, float(origin["lat"]), float(origin["lon"]))
-    nb = _nearest_node(G, float(destination["lat"]), float(destination["lon"]))
-    km = _shortest_km(G, na, nb)
+    if travel_matrix is not None:
+        km, travel_min = travel_matrix.travel(origin["id"], destination["id"], minute)
+    else:
+        na = _nearest_node(G, float(origin["lat"]), float(origin["lon"]))
+        nb = _nearest_node(G, float(destination["lat"]), float(destination["lon"]))
+        km = _shortest_km(G, na, nb)
+        travel_min = _travel_minutes(km, minute, dt)
     energy = kwh_needed(km, cons_kwh_per_km, energy_model, speed_kmph=_speed_kmph(minute))
-    arrive = minute + _travel_minutes(km, minute, dt)
+    arrive = minute + travel_min
     return (destination["id"], arrive, soc - energy, cost), energy, arrive
 
 
@@ -489,6 +493,33 @@ def plan_route_with_charging(
     if not ch.empty:
         ch = ch[ch.apply(lambda row: _charger_matches(row, required_plug_type), axis=1)].reset_index(drop=True)
 
+    matrix_locations = {
+        inst["depot"]["id"]: {"lat": depot[0], "lon": depot[1]},
+    }
+    for customer in inst["customers"]:
+        matrix_locations[customer["cust_id"]] = {"lat": customer["lat"], "lon": customer["lon"]}
+    for _, row in ch.iterrows():
+        matrix_locations[f"CH{row['id']}"] = {"lat": float(row["lat"]), "lon": float(row["lon"])}
+    travel_matrix = None
+    try:
+        node_by_id = {
+            loc_id: _nearest_node(G, loc["lat"], loc["lon"])
+            for loc_id, loc in matrix_locations.items()
+        }
+
+        def matrix_distance(origin_id: str, destination_id: str) -> float:
+            return shortest_path_km(G, node_by_id, origin_id, destination_id)
+
+        travel_matrix = TimeDependentTravelMatrix(
+            cache_dir=CACHE_DIR,
+            namespace="manhattan_drive",
+            locations=matrix_locations,
+            dt=dt,
+            distance_func=matrix_distance,
+        )
+    except Exception:
+        travel_matrix = None
+
     energy_model = model_from_vehicle_spec(vehicle_spec)
     soc_max = usable_battery_kwh(float(vehicle_spec["battery_kwh"]), energy_model)
     initial_soc_pct = float(vehicle_spec.get("initial_soc_pct", 1.0))
@@ -587,7 +618,9 @@ def plan_route_with_charging(
             nearest_charge_kwh = kwh_needed(nearest_charge["km"], cons, energy_model, speed_kmph=_speed_kmph(cur_start))
             needed_after_arrival = min(soc_max, max(needed_after_arrival, nearest_charge_kwh))
 
-        drive_row, drive_energy, arrive = _drive_leg(G, current_loc, B, cur_start, soc, total_cost, cons, dt, energy_model)
+        drive_row, drive_energy, arrive = _drive_leg(
+            G, current_loc, B, cur_start, soc, total_cost, cons, dt, energy_model, travel_matrix
+        )
         if arrive > day_end_min:
             completed = False
             completion_reason = "time"
@@ -644,7 +677,9 @@ def plan_route_with_charging(
         charge_row = None
         charge_arrive = None
         for site in reachable_sites:
-            candidate_row, _, candidate_arrive = _drive_leg(G, current_loc, site, cur_start, soc, total_cost, cons, dt, energy_model)
+            candidate_row, _, candidate_arrive = _drive_leg(
+                G, current_loc, site, cur_start, soc, total_cost, cons, dt, energy_model, travel_matrix
+            )
             if candidate_row[2] >= reserve_kwh - 1e-6:
                 charge_site = site
                 charge_row = candidate_row
@@ -663,6 +698,9 @@ def plan_route_with_charging(
         current_loc = charge_site
         soc = charge_row[2]
         cur_start = charge_arrive
+
+    if travel_matrix is not None:
+        travel_matrix.save()
 
     return {
         "timeline": timeline,

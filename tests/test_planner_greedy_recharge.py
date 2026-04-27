@@ -30,7 +30,7 @@ def test_low_battery_route_inserts_recharge_and_continues(monkeypatch, tmp_path)
         ("CH1", "DEPOT1"): 1.5,
     }
 
-    def fake_drive_leg(_graph, origin, destination, minute, soc, cost, cons_kwh_per_km, dt, energy_model=None):
+    def fake_drive_leg(_graph, origin, destination, minute, soc, cost, cons_kwh_per_km, dt, energy_model=None, travel_matrix=None):
         km = distances[(origin["id"], destination["id"])]
         energy = km * cons_kwh_per_km
         arrive = minute + 10

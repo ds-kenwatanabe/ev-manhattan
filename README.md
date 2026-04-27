@@ -15,6 +15,7 @@ The current workflow is interactive: start the web app, choose the depot/custome
 - Can fetch NYISO Zone J prices dynamically for the selected day when public NYISO data is available.
 - Generates per-run price files and routing instances.
 - Tracks battery state of charge, driving energy, charging energy, charging cost, and estimated energy cost.
+- Uses a cached time-dependent travel-time matrix for route legs.
 - Inserts real charging stops when the vehicle needs to recharge.
 - Stops a vehicle only when the configured time window is exceeded.
 - Shows completed stops, recharge stops, remaining stops, and route maps in the browser.
@@ -66,8 +67,16 @@ Driving:
 - Simple driving energy is `distance_km * cons_kwh_per_km`.
 - Optional realistic energy modifiers add payload, stop-and-go, temperature/HVAC, speed, regenerative braking, and usable battery degradation effects.
 - SoC after a drive is `previous_soc_kwh - driving_energy_kwh`.
-- Travel time is `(distance_km / speed_kmph) * 60`, rounded up to the `dt` grid.
+- Travel time comes from a cached `T[i, j, t]` matrix, rounded up to the `dt` grid.
 - Speed starts at `30 km/h` and is reduced by the traffic multiplier in `src/sim/traffic.py`.
+
+Travel-time matrix:
+
+```text
+T[i, j, t] = shortest_path_travel_time_minutes(i, j, departing_at_t)
+```
+
+The planner caches shortest-path distance once per origin/destination pair, then stores travel time for each departure bucket in the day. Cache files are written under `data/cache/` and are ignored by Git.
 
 Shortest-path formula:
 
@@ -253,6 +262,7 @@ src/
   metrics/
     travel.py           Network travel metrics
     energy.py           Energy helpers
+    time_dependent.py   Cached time-dependent travel-time matrix
   build_graph.py        Road graph builder
   build_instance.py     Base instance builder
   fetch_ocm.py          Open Charge Map fetcher

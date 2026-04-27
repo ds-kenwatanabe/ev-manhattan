@@ -37,7 +37,7 @@ def test_customer_time_window_wait_and_service_time(monkeypatch, tmp_path):
     inst_path = tmp_path / "instance.json"
     inst_path.write_text(json.dumps(inst))
 
-    def fake_drive_leg(_graph, origin, destination, minute, soc, cost, cons_kwh_per_km, dt, energy_model=None):
+    def fake_drive_leg(_graph, origin, destination, minute, soc, cost, cons_kwh_per_km, dt, energy_model=None, travel_matrix=None):
         arrive = minute + 10
         return (destination["id"], arrive, soc - 1.0, cost), 1.0, arrive
 
@@ -83,7 +83,7 @@ def test_partial_charging_stops_when_next_leg_is_feasible(monkeypatch, tmp_path)
         ("CH1", "DEPOT1"): 0.5,
     }
 
-    def fake_drive_leg(_graph, origin, destination, minute, soc, cost, cons_kwh_per_km, dt, energy_model=None):
+    def fake_drive_leg(_graph, origin, destination, minute, soc, cost, cons_kwh_per_km, dt, energy_model=None, travel_matrix=None):
         energy = distances[(origin["id"], destination["id"])]
         arrive = minute + 10
         return (destination["id"], arrive, soc - energy, cost), energy, arrive
@@ -136,7 +136,7 @@ def test_charger_plug_filter_and_queue_wait(monkeypatch, tmp_path):
         ("CH2", "DEPOT1"): 0.5,
     }
 
-    def fake_drive_leg(_graph, origin, destination, minute, soc, cost, cons_kwh_per_km, dt, energy_model=None):
+    def fake_drive_leg(_graph, origin, destination, minute, soc, cost, cons_kwh_per_km, dt, energy_model=None, travel_matrix=None):
         energy = distances[(origin["id"], destination["id"])]
         arrive = minute + 10
         return (destination["id"], arrive, soc - energy, cost), energy, arrive

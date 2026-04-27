@@ -78,12 +78,21 @@ This keeps the app responsive while still calculating actual drive legs on the r
 
 Drive legs use `data/processed/manhattan_drive.graphml`.
 
-For each drive:
+The active planner uses a cached time-dependent travel-time matrix:
+
+```text
+T[i, j, t] = shortest_path_travel_time_minutes(i, j, departing_at_t)
+```
+
+For each origin/destination pair, the first request computes shortest-path road distance on the Manhattan graph. The cache then stores travel time for every departure bucket in the day using the configured `dt`.
+
+For each pair:
 
 1. Snap origin and destination lat/lon to the nearest graph nodes.
 2. Compute shortest path distance using edge `length`.
 3. Fall back to the undirected graph if the directed graph has no path.
 4. Convert meters to kilometers.
+5. Build `T[i, j, t]` from the distance and time-of-day traffic speed.
 
 The implementation calls:
 
@@ -128,6 +137,13 @@ otherwise   -> 1.00
 ```
 
 The effective speed is never allowed below `5 km/h`.
+
+Cache behavior:
+
+- The matrix is lazy, so it only computes pairs the planner actually evaluates.
+- A cache entry stores `distance_km` plus `time_by_departure`.
+- Cache keys include the road-network namespace, locations, `dt`, base speed, and traffic model version.
+- Cache files are saved in `data/cache/` as JSON and are safe to delete.
 
 ## Route Completion
 
