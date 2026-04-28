@@ -30,8 +30,6 @@ Optimizer modes:
 - `Baseline 1: nearest-neighbor + charging insertion`: orders customers geographically, then inserts chargers afterward.
 - `Baseline 2: OR-Tools VRPTW without EV`: uses OR-Tools for capacity/time-window route ordering, then applies EV charging feasibility afterward.
 
-This is still heuristic, not a full mixed-integer global EVRPTW solver. The important improvement is that the main mode no longer treats customer order as completely independent from charging access.
-
 EV feasibility loop:
 
 1. Start at the depot with `Battery kWh * Initial SoC %`.
