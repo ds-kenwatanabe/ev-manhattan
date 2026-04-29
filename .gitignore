@@ -12,5 +12,5 @@ data/raw/
 data/processed/*.html
 
 src/cache/
-src/data/
 src/run/data/outputs/
+src/data/processed/

@@ -18,6 +18,13 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
+For a reproducible local setup with the default sample data:
+
+```bash
+cp .env.example .env
+make setup
+```
+
 ## Start The Browser UI
 
 ```bash
@@ -68,4 +75,33 @@ Expected output:
 
 ```text
 200
+```
+
+## Reproducibility Helpers
+
+The repository includes these project-level helpers:
+
+- `.env.example`: local environment defaults for host, port, seed, and sample size.
+- `Makefile`: repeatable setup, test, run, sample generation, and Docker commands.
+- `pyproject.toml`: project metadata and dependency groups.
+- `Dockerfile`: container image for running the browser app.
+- `data/sample/`: small committed sample scenario generated from a seed.
+
+Generate the sample scenario:
+
+```bash
+make sample SEED=7
+```
+
+Run tests:
+
+```bash
+make test
+```
+
+Build and run the Docker image:
+
+```bash
+make docker-build
+make docker-run
 ```

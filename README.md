@@ -126,6 +126,14 @@ python3 -m venv .venv
 .venv/bin/python src/run/web_app.py --host 127.0.0.1 --port 8000
 ```
 
+Or use the reproducible Make targets:
+
+```bash
+cp .env.example .env
+make setup
+make run
+```
+
 Open:
 
 ```text
@@ -195,12 +203,30 @@ Each browser run writes files such as:
 - `web_overview_...html`
 - `web_plan_..._V1.html`
 
+Small reproducible sample data lives in:
+
+```text
+data/sample/
+```
+
+Regenerate it with:
+
+```bash
+make sample SEED=7
+```
+
 ## Useful Commands
 
 Run the browser app:
 
 ```bash
 .venv/bin/python src/run/web_app.py --host 127.0.0.1 --port 8000
+```
+
+Run with Make:
+
+```bash
+make run
 ```
 
 Run the script planner:
@@ -225,6 +251,13 @@ Regenerate the base instance:
 
 ```bash
 .venv/bin/python src/build_instance.py
+```
+
+Build and run Docker:
+
+```bash
+make docker-build
+make docker-run
 ```
 
 ## Documentation
@@ -263,6 +296,8 @@ src/
     time_dependent.py   Cached time-dependent travel-time matrix
   build_graph.py        Road graph builder
   build_instance.py     Base instance builder
+  data/
+    sample_scenario.py  Seeded sample dataset generator
   fetch_ocm.py          Open Charge Map fetcher
   fetch_nyiso.py        NYISO price fetcher
 ```

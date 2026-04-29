@@ -1,0 +1,23 @@
+[project]
+name = "ev-manhattan"
+version = "0.1.0"
+description = "Browser-based EV route planning experiments for Manhattan."
+requires-python = ">=3.11"
+dependencies = [
+  "folium",
+  "geopandas",
+  "networkx",
+  "numpy",
+  "ortools",
+  "osmnx",
+  "pandas",
+  "pyarrow",
+  "python-dotenv",
+  "requests",
+  "shapely",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+]

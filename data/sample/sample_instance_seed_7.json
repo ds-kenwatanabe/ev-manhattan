@@ -1,0 +1,197 @@
+{
+  "meta": {
+    "city": "Manhattan, NYC",
+    "date": "2025-07-15",
+    "price_unit": "USD/kWh",
+    "timezone": "America/New_York",
+    "sample": true,
+    "seed": 7
+  },
+  "depot": {
+    "id": "DEPOT1",
+    "lat": 40.756,
+    "lon": -73.998,
+    "start_min": 480,
+    "end_min": 1020
+  },
+  "vehicles": [
+    {
+      "id": "V1",
+      "battery_kwh": 35.0,
+      "initial_soc_pct": 0.85,
+      "cons_kwh_per_km": 0.24,
+      "cap_kg": 500.0,
+      "depot": "DEPOT1"
+    },
+    {
+      "id": "V2",
+      "battery_kwh": 35.0,
+      "initial_soc_pct": 0.85,
+      "cons_kwh_per_km": 0.24,
+      "cap_kg": 500.0,
+      "depot": "DEPOT1"
+    }
+  ],
+  "customers": [
+    {
+      "cust_id": "C000",
+      "lat": 40.747638,
+      "lon": -74.010296,
+      "tw_start_min": 630,
+      "tw_end_min": 750,
+      "demand_kg": 44
+    },
+    {
+      "cust_id": "C001",
+      "lat": 40.760795,
+      "lon": -73.962057,
+      "tw_start_min": 525,
+      "tw_end_min": 690,
+      "demand_kg": 23
+    },
+    {
+      "cust_id": "C002",
+      "lat": 40.750355,
+      "lon": -74.009088,
+      "tw_start_min": 495,
+      "tw_end_min": 600,
+      "demand_kg": 15
+    },
+    {
+      "cust_id": "C003",
+      "lat": 40.724138,
+      "lon": -73.981335,
+      "tw_start_min": 735,
+      "tw_end_min": 915,
+      "demand_kg": 24
+    },
+    {
+      "cust_id": "C004",
+      "lat": 40.76081,
+      "lon": -74.009536,
+      "tw_start_min": 780,
+      "tw_end_min": 1020,
+      "demand_kg": 47
+    },
+    {
+      "cust_id": "C005",
+      "lat": 40.788338,
+      "lon": -74.010391,
+      "tw_start_min": 660,
+      "tw_end_min": 750,
+      "demand_kg": 18
+    },
+    {
+      "cust_id": "C006",
+      "lat": 40.730098,
+      "lon": -74.006404,
+      "tw_start_min": 615,
+      "tw_end_min": 795,
+      "demand_kg": 29
+    },
+    {
+      "cust_id": "C007",
+      "lat": 40.732651,
+      "lon": -73.98043,
+      "tw_start_min": 735,
+      "tw_end_min": 975,
+      "demand_kg": 50
+    },
+    {
+      "cust_id": "C008",
+      "lat": 40.72682,
+      "lon": -73.973122,
+      "tw_start_min": 570,
+      "tw_end_min": 735,
+      "demand_kg": 46
+    },
+    {
+      "cust_id": "C009",
+      "lat": 40.734417,
+      "lon": -73.974898,
+      "tw_start_min": 495,
+      "tw_end_min": 720,
+      "demand_kg": 37
+    },
+    {
+      "cust_id": "C010",
+      "lat": 40.752592,
+      "lon": -73.961287,
+      "tw_start_min": 840,
+      "tw_end_min": 1005,
+      "demand_kg": 33
+    },
+    {
+      "cust_id": "C011",
+      "lat": 40.775607,
+      "lon": -73.973856,
+      "tw_start_min": 615,
+      "tw_end_min": 750,
+      "demand_kg": 25
+    }
+  ],
+  "chargers": [
+    {
+      "id": 1,
+      "name": "Sample Charger 1",
+      "lat": 40.728239,
+      "lon": -73.995387,
+      "power_kw": 11.0,
+      "plugs": 3,
+      "plug_type": "CCS"
+    },
+    {
+      "id": 2,
+      "name": "Sample Charger 2",
+      "lat": 40.741428,
+      "lon": -73.960031,
+      "power_kw": 7.2,
+      "plugs": 4,
+      "plug_type": "J1772"
+    },
+    {
+      "id": 3,
+      "name": "Sample Charger 3",
+      "lat": 40.771457,
+      "lon": -74.003097,
+      "power_kw": 11.0,
+      "plugs": 4,
+      "plug_type": "J1772"
+    },
+    {
+      "id": 4,
+      "name": "Sample Charger 4",
+      "lat": 40.784569,
+      "lon": -74.006964,
+      "power_kw": 50.0,
+      "plugs": 3,
+      "plug_type": "CCS"
+    }
+  ],
+  "prices_hourly": [
+    0.1662,
+    0.1671,
+    0.1723,
+    0.1723,
+    0.1883,
+    0.1934,
+    0.2051,
+    0.2323,
+    0.2306,
+    0.2318,
+    0.2126,
+    0.1985,
+    0.1771,
+    0.1759,
+    0.181,
+    0.2019,
+    0.2215,
+    0.2434,
+    0.2663,
+    0.2471,
+    0.2321,
+    0.1997,
+    0.1876,
+    0.1727
+  ]
+}
