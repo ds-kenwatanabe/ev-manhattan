@@ -57,8 +57,8 @@ For each next planned stop:
    - and enough to reach the nearest charger after the customer.
 4. Compute the road-network drive leg from current location to target stop.
 5. If the vehicle can drive there and still satisfy the post-arrival energy requirement, append the target stop.
-6. If not, find reachable charger candidates from the current location.
-7. Drive to the first reachable charger whose road-network leg is feasible.
+6. If not, find reachable compatible charger candidates from the current location.
+7. Validate road-network drive legs to those candidates and rank the feasible candidates.
 8. Charge at that station up to battery capacity, or until the time window ends.
 9. Retry the same customer.
 
@@ -69,10 +69,11 @@ The route loop continues until all planned stops are reached or the route would 
 Charging candidates are selected in two layers:
 
 - Browser data filtering keeps chargers inside the Manhattan road-network hull.
-- Route-time charger lookup uses fast geographic distance with a road-distance safety factor to rank likely candidates.
-- Actual driving to the chosen charger uses the Manhattan road graph.
+- Route-time lookup uses fast geographic distance with a road-distance safety factor to shortlist likely candidates.
+- The planner validates actual road-network drive legs to the reachable candidates.
+- Reachable candidates are ranked by road distance to the charger, approximate detour to the pending stop, charger power, hourly price at expected arrival, configured queue wait, and plug compatibility.
 
-This keeps the app responsive while still calculating actual drive legs on the road network.
+This keeps the app responsive while making the chosen recharge stop sensitive to speed, cost, queue delay, compatibility, and route detour.
 
 ## Road Distance And Travel Time
 

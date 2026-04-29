@@ -105,6 +105,15 @@ def _snap_up_to_grid(minutes: int, dt: int) -> int:
     return int(math.ceil(minutes / float(dt)) * dt)
 
 
+def _safe_plug_count(value, default: int = 1) -> int:
+    try:
+        if pd.isna(value):
+            return default
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
 def _best_charge_site_from(
         inst: Dict,
         G: nx.MultiDiGraph,
@@ -123,6 +132,8 @@ def _best_charge_site_from(
             "lat": lat,
             "lon": lon,
             "power_kw": power_kw if power_kw > 0.1 else 7.2,
+            "plugs": _safe_plug_count(row.get("plugs", 1)),
+            "plug_type": str(row.get("plug_type", row.get("connection_type", "")) or ""),
             "km": _haversine_km(float(location["lat"]), float(location["lon"]), lat, lon) * 1.35,
         })
     if include_depot:
@@ -134,6 +145,8 @@ def _best_charge_site_from(
             "lat": depot_lat,
             "lon": depot_lon,
             "power_kw": 11.0,
+            "plugs": 4,
+            "plug_type": "depot",
             "km": _haversine_km(float(location["lat"]), float(location["lon"]), depot_lat, depot_lon) * 1.35,
         })
     if not candidates:
@@ -158,6 +171,8 @@ def _charge_sites_from(
             "lat": lat,
             "lon": lon,
             "power_kw": power_kw if power_kw > 0.1 else 7.2,
+            "plugs": _safe_plug_count(row.get("plugs", 1)),
+            "plug_type": str(row.get("plug_type", row.get("connection_type", "")) or ""),
             "km": _haversine_km(float(location["lat"]), float(location["lon"]), lat, lon) * 1.35,
         })
     if include_depot:
@@ -169,10 +184,59 @@ def _charge_sites_from(
             "lat": depot_lat,
             "lon": depot_lon,
             "power_kw": 11.0,
+            "plugs": 4,
+            "plug_type": "depot",
             "km": _haversine_km(float(location["lat"]), float(location["lon"]), depot_lat, depot_lon) * 1.35,
         })
     sites.sort(key=lambda c: c["km"])
     return sites
+
+
+def _charge_site_score(
+        site: Dict,
+        current_loc: Dict,
+        target_loc: Dict,
+        road_km_to_site: float,
+        direct_km_to_target: float,
+        arrive_minute: int,
+        prices_hourly: List[float],
+        queue_wait_min: int,
+) -> Tuple[float, Dict]:
+    """Rank charging candidates by route impact, energy price, queue, and power."""
+    target_approx_km = _haversine_km(
+        float(site["lat"]),
+        float(site["lon"]),
+        float(target_loc["lat"]),
+        float(target_loc["lon"]),
+    ) * 1.35
+    detour_km = max(0.0, road_km_to_site + target_approx_km - max(0.0, direct_km_to_target))
+    price = _price_at_minute(prices_hourly, arrive_minute + queue_wait_min)
+    power_kw = max(0.1, float(site.get("power_kw", 7.2) or 7.2))
+    try:
+        plugs = int(site.get("plugs", 1) or 1)
+    except (TypeError, ValueError):
+        plugs = 1
+    compatibility_penalty = 0.0 if plugs > 0 else 10_000.0
+    queue_penalty = max(0, queue_wait_min) / 30.0
+    score = (
+        road_km_to_site
+        + 1.5 * detour_km
+        + 8.0 * price
+        + queue_penalty
+        - 0.02 * min(power_kw, 250.0)
+        + compatibility_penalty
+    )
+    details = {
+        "road_km_to_site": road_km_to_site,
+        "target_approx_km": target_approx_km,
+        "detour_km": detour_km,
+        "price_usd_per_kwh": price,
+        "power_kw": power_kw,
+        "queue_wait_min": queue_wait_min,
+        "compatibility_penalty": compatibility_penalty,
+        "score": score,
+    }
+    return score, details
 
 
 def _charger_matches(row, required_plug_type: str) -> bool:
@@ -700,24 +764,57 @@ def plan_route_with_charging(
         charge_arrive = None
         charge_km = 0.0
         charge_energy = 0.0
+        best_candidate = None
         for site in reachable_sites:
             candidate_row, candidate_energy, candidate_arrive, candidate_km = _drive_leg(
                 G, current_loc, site, cur_start, soc, total_cost, cons, dt, energy_model, travel_matrix
             )
-            if candidate_row[2] >= reserve_kwh - 1e-6:
-                charge_site = site
-                charge_row = candidate_row
-                charge_arrive = candidate_arrive
-                charge_km = candidate_km
-                charge_energy = candidate_energy
-                break
+            if candidate_row[2] < reserve_kwh - 1e-6:
+                continue
+            if candidate_arrive > day_end_min:
+                continue
+            score, score_details = _charge_site_score(
+                site,
+                current_loc,
+                B,
+                candidate_km,
+                drive_km,
+                candidate_arrive,
+                inst["prices_hourly"],
+                queue_wait_min if site["id"].startswith("CH") else 0,
+            )
+            candidate = (
+                score,
+                -float(site.get("power_kw", 0.0) or 0.0),
+                candidate_km,
+                str(site["id"]),
+                site,
+                candidate_row,
+                candidate_arrive,
+                candidate_km,
+                candidate_energy,
+                score_details,
+            )
+            if best_candidate is None or candidate[:4] < best_candidate[:4]:
+                best_candidate = candidate
+        if best_candidate is not None:
+            (
+                _score,
+                _power_sort,
+                _km_sort,
+                _id_sort,
+                charge_site,
+                charge_row,
+                charge_arrive,
+                charge_km,
+                charge_energy,
+                score_details,
+            ) = best_candidate
+            charge_site = dict(charge_site)
+            charge_site["selection_score"] = score_details
         if charge_site is None or charge_row is None or charge_arrive is None:
             completed = False
             completion_reason = "energy"
-            break
-        if charge_arrive > day_end_min:
-            completed = False
-            completion_reason = "time"
             break
         depart = cur_start
         timeline.append(charge_row)
@@ -728,6 +825,7 @@ def plan_route_with_charging(
             "arrive_min": charge_arrive,
             "distance_km": charge_km,
             "energy_kwh": charge_energy,
+            "charger_selection_score": charge_site.get("selection_score"),
         })
         current_id = charge_site["id"]
         current_loc = charge_site
