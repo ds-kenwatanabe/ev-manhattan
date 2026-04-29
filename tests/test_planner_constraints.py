@@ -39,7 +39,7 @@ def test_customer_time_window_wait_and_service_time(monkeypatch, tmp_path):
 
     def fake_drive_leg(_graph, origin, destination, minute, soc, cost, cons_kwh_per_km, dt, energy_model=None, travel_matrix=None):
         arrive = minute + 10
-        return (destination["id"], arrive, soc - 1.0, cost), 1.0, arrive
+        return (destination["id"], arrive, soc - 1.0, cost), 1.0, arrive, 1.0
 
     monkeypatch.setattr(planner, "_load_graph", lambda: object())
     monkeypatch.setattr(planner, "_drive_leg", fake_drive_leg)
@@ -86,7 +86,7 @@ def test_partial_charging_stops_when_next_leg_is_feasible(monkeypatch, tmp_path)
     def fake_drive_leg(_graph, origin, destination, minute, soc, cost, cons_kwh_per_km, dt, energy_model=None, travel_matrix=None):
         energy = distances[(origin["id"], destination["id"])]
         arrive = minute + 10
-        return (destination["id"], arrive, soc - energy, cost), energy, arrive
+        return (destination["id"], arrive, soc - energy, cost), energy, arrive, energy
 
     monkeypatch.setattr(planner, "_load_graph", lambda: object())
     monkeypatch.setattr(planner, "_drive_leg", fake_drive_leg)
@@ -139,7 +139,7 @@ def test_charger_plug_filter_and_queue_wait(monkeypatch, tmp_path):
     def fake_drive_leg(_graph, origin, destination, minute, soc, cost, cons_kwh_per_km, dt, energy_model=None, travel_matrix=None):
         energy = distances[(origin["id"], destination["id"])]
         arrive = minute + 10
-        return (destination["id"], arrive, soc - energy, cost), energy, arrive
+        return (destination["id"], arrive, soc - energy, cost), energy, arrive, energy
 
     def fake_charge_sites(_inst, _graph, _location, chargers_df, include_depot):
         return [
@@ -170,3 +170,40 @@ def test_charger_plug_filter_and_queue_wait(monkeypatch, tmp_path):
     assert result["completed"] is True
     assert "CH1" not in [row[0] for row in result["timeline"]]
     assert ("CH2", 525, 0.0, 0.0) in result["timeline"]
+
+
+def test_late_customer_window_is_recorded_and_route_continues(monkeypatch, tmp_path):
+    inst = {
+        "depot": {"id": "DEPOT1", "lat": 0.0, "lon": 0.0, "start_min": 480, "end_min": 720},
+        "customers": [{"cust_id": "C001", "lat": 0.0, "lon": 1.0, "tw_start_min": 480, "tw_end_min": 485}],
+        "chargers": [],
+        "prices_hourly": [0.25] * 24,
+    }
+    inst_path = tmp_path / "instance.json"
+    inst_path.write_text(json.dumps(inst))
+
+    def fake_drive_leg(_graph, origin, destination, minute, soc, cost, cons_kwh_per_km, dt, energy_model=None, travel_matrix=None):
+        arrive = minute + 10
+        return (destination["id"], arrive, soc - 1.0, cost), 1.0, arrive, 1.0
+
+    monkeypatch.setattr(planner, "_load_graph", lambda: object())
+    monkeypatch.setattr(planner, "_drive_leg", fake_drive_leg)
+    monkeypatch.setattr(planner, "_best_charge_site_from", lambda *_args, **_kwargs: None)
+
+    result = planner.plan_route_with_charging(
+        instance_json=str(inst_path),
+        route_ids_in_order=["DEPOT1", "C001", "DEPOT1"],
+        vehicle_spec={
+            "battery_kwh": 5.0,
+            "initial_soc_pct": 1.0,
+            "cons_kwh_per_km": 1.0,
+            "cap_kg": 100.0,
+            "service_time_min": 5,
+        },
+        start_minute=480,
+        dt=10,
+    )
+
+    assert result["completed"] is True
+    assert result["late_delivery_ids"] == ["C001"]
+    assert result["timeline"][-1][0] == "DEPOT1"

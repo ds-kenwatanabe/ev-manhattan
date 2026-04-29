@@ -150,7 +150,7 @@ Cache behavior:
 The planner treats the following as hard constraints:
 
 - customer service time,
-- customer time windows,
+- customer time windows, recorded as late deliveries when the customer can still be served before the route end time,
 - vehicle capacity,
 - mandatory return-to-depot when enabled,
 - depot end time and optional driver shift limit,
@@ -170,7 +170,21 @@ Did not complete route in the given time
 
 The UI still shows customers reached, recharge stops reached, remaining planned stops, and a map of the partial route.
 
-If a customer time window cannot be met after travel, waiting, and service time, the route stops with a time-window failure. If route demand exceeds vehicle capacity, it stops before dispatch with a capacity failure. If no compatible reachable charger exists while maintaining reserve SoC, it stops with an energy failure.
+If a customer time window cannot be met after travel, waiting, and service time, the route records that customer as late and continues when service still fits inside the configured route end time. If service would exceed the depot end time or driver shift limit, the route stops with a time failure. If route demand exceeds vehicle capacity, it stops before dispatch with a capacity failure. If no compatible reachable charger exists while maintaining reserve SoC, it stops with an energy failure.
+
+## Evaluation Metrics
+
+Every browser run computes a comparable summary per vehicle and for CSV export:
+
+- `% customers served`: served customer stops divided by planned customer stops.
+- `total distance`: sum of road-network drive-leg distance, including charger detours.
+- `total time`: elapsed route time from dispatch to the last reached stop.
+- `energy cost`: estimated driving energy value plus recharge cost.
+- `charging time`: minutes spent waiting for and adding energy at chargers.
+- `number of charging stops`: grouped recharge sessions at depot or public chargers.
+- `late deliveries`: customers served after their configured time window.
+- `minimum SoC`: lowest state of charge in the route timeline.
+- `runtime`: wall-clock seconds spent planning that vehicle route.
 
 ## Energy And Cost
 

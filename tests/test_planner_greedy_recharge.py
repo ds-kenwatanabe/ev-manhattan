@@ -34,7 +34,7 @@ def test_low_battery_route_inserts_recharge_and_continues(monkeypatch, tmp_path)
         km = distances[(origin["id"], destination["id"])]
         energy = km * cons_kwh_per_km
         arrive = minute + 10
-        return (destination["id"], arrive, soc - energy, cost), energy, arrive
+        return (destination["id"], arrive, soc - energy, cost), energy, arrive, km
 
     def fake_best_charge(_inst, _graph, location, _chargers_df, include_depot):
         if location["id"] == "DEPOT1":

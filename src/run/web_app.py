@@ -23,6 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.run.plan_day import plan_day
+from src.eval.metrics import evaluate_plan
 from src.eval.summarize import grouped_charges, summarize_timeline
 from src.fetch_nyiso import fetch_nyiso_zone_j_day
 from src.solve.route_optimizer import optimize_routes
@@ -897,6 +898,7 @@ def _vehicle_summary(inst, vehicle_id, route, plan, run_config):
     details = _location_details(inst)
     summary = summarize_timeline(plan["timeline"], depot_id=inst["depot"]["id"])
     charges = grouped_charges(plan["timeline"], depot_id=inst["depot"]["id"])
+    evaluation = evaluate_plan(inst, route, plan, runtime_sec=float(plan.get("runtime_sec", 0.0)))
     drives = summary["drives"]
     charge_energy = sum(float(c["energy_kwh"]) for c in charges)
     charge_cost = sum(float(c["cost_usd"]) for c in charges)
@@ -958,7 +960,10 @@ def _vehicle_summary(inst, vehicle_id, route, plan, run_config):
 
     completion_reason = plan.get("completion_reason", "completed")
     if plan.get("completed", True):
-        status_text = "Completed route"
+        if plan.get("late_delivery_ids"):
+            status_text = "Completed route with late deliveries"
+        else:
+            status_text = "Completed route"
     elif completion_reason == "time":
         status_text = "Did not complete route in the given time"
     elif completion_reason == "energy":
@@ -987,6 +992,8 @@ def _vehicle_summary(inst, vehicle_id, route, plan, run_config):
         "completion_reason": completion_reason,
         "status_text": status_text,
         "remaining_route_ids": list(plan.get("remaining_route_ids", [])),
+        "evaluation": evaluation,
+        "late_delivery_ids": list(plan.get("late_delivery_ids", [])),
         "timeline_points": timeline_points,
         "charges": [
             {
@@ -1109,11 +1116,20 @@ def _write_summary_csv(stamp, run_number, vehicle_summaries):
         "elapsed_min",
         "billable_min",
         "remaining_stops",
+        "customers_served_pct",
+        "total_distance_km",
+        "total_time_min",
+        "charging_time_min",
+        "charging_stops",
+        "late_deliveries",
+        "min_soc_kwh",
+        "runtime_sec",
     ]
     with open(path, "w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=fields)
         writer.writeheader()
         for vehicle in vehicle_summaries:
+            evaluation = vehicle.get("evaluation", {})
             writer.writerow({
                 "run": run_number,
                 "vehicle": vehicle["vehicle_id"],
@@ -1129,6 +1145,14 @@ def _write_summary_csv(stamp, run_number, vehicle_summaries):
                 "elapsed_min": vehicle["elapsed_min"],
                 "billable_min": vehicle["billable_min"],
                 "remaining_stops": " ".join(vehicle["remaining_route_ids"]),
+                "customers_served_pct": f"{evaluation.get('customers_served_pct', 0.0):.2f}",
+                "total_distance_km": f"{evaluation.get('total_distance_km', 0.0):.4f}",
+                "total_time_min": evaluation.get("total_time_min", vehicle["elapsed_min"]),
+                "charging_time_min": evaluation.get("charging_time_min", 0),
+                "charging_stops": evaluation.get("charging_stops", len(vehicle.get("charges", []))),
+                "late_deliveries": evaluation.get("late_deliveries", 0),
+                "min_soc_kwh": f"{evaluation.get('min_soc_kwh', vehicle['end_soc']):.4f}",
+                "runtime_sec": f"{evaluation.get('runtime_sec', 0.0):.4f}",
             })
     return path
 
@@ -1285,6 +1309,7 @@ def _page(form=None, results=None, error=None):
             """
             vehicles = []
             for vehicle in result["vehicle_summaries"]:
+                evaluation = vehicle.get("evaluation", {})
                 compare_payload.append({
                     "run": result["run"],
                     "vehicle": vehicle["vehicle_id"],
@@ -1296,6 +1321,10 @@ def _page(form=None, results=None, error=None):
                     "cost": round(vehicle["total_energy_cost"], 3),
                     "end_soc": round(vehicle["end_soc"], 3),
                     "billable": vehicle["billable_min"],
+                    "served_pct": round(evaluation.get("customers_served_pct", 0.0), 1),
+                    "distance": round(evaluation.get("total_distance_km", 0.0), 2),
+                    "late": evaluation.get("late_deliveries", 0),
+                    "runtime": round(evaluation.get("runtime_sec", 0.0), 3),
                 })
                 route_rows = "".join(
                     "<tr>"
@@ -1347,6 +1376,13 @@ def _page(form=None, results=None, error=None):
                           <span>Break excluded <strong>{vehicle['break_overlap_min']} min</strong></span>
                           <span>Billable time <strong>{vehicle['billable_min']} min</strong></span>
                           <span>Infeasibility <strong>{html.escape(vehicle['status_text'] if not vehicle['completed'] else 'None')}</strong></span>
+                          <span>Customers served <strong>{evaluation.get('customers_served_pct', 0.0):.1f}%</strong></span>
+                          <span>Total distance <strong>{evaluation.get('total_distance_km', 0.0):.2f} km</strong></span>
+                          <span>Charging time <strong>{evaluation.get('charging_time_min', 0)} min</strong></span>
+                          <span>Charging stops <strong>{evaluation.get('charging_stops', 0)}</strong></span>
+                          <span>Late deliveries <strong>{evaluation.get('late_deliveries', 0)}</strong></span>
+                          <span>Minimum SoC <strong>{evaluation.get('min_soc_kwh', 0.0):.2f} kWh</strong></span>
+                          <span>Runtime <strong>{evaluation.get('runtime_sec', 0.0):.2f}s</strong></span>
                         </div>
                       </div>
                       <div class="curves">
@@ -1991,6 +2027,10 @@ def _page(form=None, results=None, error=None):
             <tr><th>Cost</th><td>$${{row.cost}}</td></tr>
             <tr><th>End SoC</th><td>${{row.end_soc}} kWh</td></tr>
             <tr><th>Billable</th><td>${{row.billable}} min</td></tr>
+            <tr><th>Customers served</th><td>${{row.served_pct}}%</td></tr>
+            <tr><th>Distance</th><td>${{row.distance}} km</td></tr>
+            <tr><th>Late deliveries</th><td>${{row.late}}</td></tr>
+            <tr><th>Runtime</th><td>${{row.runtime}}s</td></tr>
           </tbody>
         </table>
       </div>`;

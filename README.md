@@ -161,7 +161,7 @@ Main controls:
 - `Service min/customer`, `Shift limit min`, `Queue wait min`, `Required plug type`, `Mandatory return to depot`: hard constraint controls.
 - `Start time` and `End time`: route operating window.
 
-After a run, the page shows overview and per-vehicle maps, route status, stop order, recharge details, energy used, driving energy value, recharge cost, total estimated energy cost, and generated data links.
+After a run, the page shows overview and per-vehicle maps, route status, stop order, recharge details, energy used, driving energy value, recharge cost, total estimated energy cost, customers served percentage, total distance, charging time, charging stops, late deliveries, minimum SoC, runtime, and generated data links.
 
 ## Data
 

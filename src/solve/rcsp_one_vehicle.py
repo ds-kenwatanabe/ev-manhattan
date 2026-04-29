@@ -200,7 +200,7 @@ def _drive_leg(
         dt: int,
         energy_model: EnergyModel | None = None,
         travel_matrix: TimeDependentTravelMatrix | None = None,
-) -> Tuple[Tuple[str, int, float, float], float, int]:
+) -> Tuple[Tuple[str, int, float, float], float, int, float]:
     if travel_matrix is not None:
         km, travel_min = travel_matrix.travel(origin["id"], destination["id"], minute)
     else:
@@ -210,7 +210,7 @@ def _drive_leg(
         travel_min = _travel_minutes(km, minute, dt)
     energy = kwh_needed(km, cons_kwh_per_km, energy_model, speed_kmph=_speed_kmph(minute))
     arrive = minute + travel_min
-    return (destination["id"], arrive, soc - energy, cost), energy, arrive
+    return (destination["id"], arrive, soc - energy, cost), energy, arrive, km
 
 
 # Label handling (dominance)
@@ -541,6 +541,8 @@ def plan_route_with_charging(
             "completion_reason": "capacity",
             "completed_route_ids": [route_ids_in_order[0]] if route_ids_in_order else [],
             "remaining_route_ids": route_ids_in_order[1:] if route_ids_in_order else [],
+            "drive_legs": [],
+            "late_delivery_ids": [],
         }
 
     def charge_here(location: Dict, minute: int, start_soc: float, start_cost: float, target_soc: float):
@@ -572,26 +574,27 @@ def plan_route_with_charging(
 
     def apply_customer_time_constraints(customer_id: str, minute: int, soc_now: float, cost_now: float):
         if customer_id not in customer_meta:
-            return [], minute, True
+            return [], minute, False, False
         customer = customer_meta[customer_id]
         rows = []
         tw_start = int(customer.get("tw_start_min", 0))
         tw_end = int(customer.get("tw_end_min", 24 * 60))
         t = minute
+        is_late = t > tw_end
         if t < tw_start:
             if tw_start > day_end_min:
-                return rows, t, False
+                return rows, t, False, False
             rows.append((customer_id, tw_start, soc_now, cost_now))
             t = tw_start
-        if t > tw_end:
-            return rows, t, False
         if service_time_min > 0:
             service_end = t + service_time_min
-            if service_end > tw_end or service_end > day_end_min:
-                return rows, t, False
+            if service_end > tw_end:
+                is_late = True
+            if service_end > day_end_min:
+                return rows, t, is_late, False
             rows.append((customer_id, service_end, soc_now, cost_now))
             t = service_end
-        return rows, t, True
+        return rows, t, is_late, True
 
     completed = True
     completion_reason = "completed"
@@ -601,6 +604,8 @@ def plan_route_with_charging(
     current_loc = id2latlon(current_id)
     total_cost = 0.0
     timeline: List[Tuple[str, int, float, float]] = [(current_id, cur_start, soc, total_cost)]
+    drive_legs = []
+    late_delivery_ids = []
     target_index = 1
     safety_counter = 0
 
@@ -618,7 +623,7 @@ def plan_route_with_charging(
             nearest_charge_kwh = kwh_needed(nearest_charge["km"], cons, energy_model, speed_kmph=_speed_kmph(cur_start))
             needed_after_arrival = min(soc_max, max(needed_after_arrival, nearest_charge_kwh))
 
-        drive_row, drive_energy, arrive = _drive_leg(
+        drive_row, drive_energy, arrive, drive_km = _drive_leg(
             G, current_loc, B, cur_start, soc, total_cost, cons, dt, energy_model, travel_matrix
         )
         if arrive > day_end_min:
@@ -626,19 +631,36 @@ def plan_route_with_charging(
             completion_reason = "time"
             break
         if soc - drive_energy >= needed_after_arrival - 1e-6:
+            depart = cur_start
             timeline.append(drive_row)
+            drive_legs.append({
+                "from": current_id,
+                "to": target_id,
+                "depart_min": depart,
+                "arrive_min": arrive,
+                "distance_km": drive_km,
+                "energy_kwh": drive_energy,
+            })
             soc = drive_row[2]
             cur_start = arrive
             current_id = target_id
             current_loc = B
-            constraint_rows, constrained_time, ok = apply_customer_time_constraints(target_id, cur_start, soc, total_cost)
-            if not ok:
-                completed = False
-                completion_reason = "time_window"
-                break
-            if constraint_rows:
-                timeline.extend(constraint_rows)
-                cur_start = constrained_time
+            if target_id in customer_meta:
+                constraint_rows, constrained_time, is_late, ok = apply_customer_time_constraints(
+                    target_id,
+                    cur_start,
+                    soc,
+                    total_cost,
+                )
+                if not ok:
+                    completed = False
+                    completion_reason = "time"
+                    break
+                if is_late and target_id not in late_delivery_ids:
+                    late_delivery_ids.append(target_id)
+                if constraint_rows:
+                    timeline.extend(constraint_rows)
+                    cur_start = constrained_time
             completed_route_ids.append(target_id)
             target_index += 1
             continue
@@ -676,14 +698,18 @@ def plan_route_with_charging(
         charge_site = None
         charge_row = None
         charge_arrive = None
+        charge_km = 0.0
+        charge_energy = 0.0
         for site in reachable_sites:
-            candidate_row, _, candidate_arrive = _drive_leg(
+            candidate_row, candidate_energy, candidate_arrive, candidate_km = _drive_leg(
                 G, current_loc, site, cur_start, soc, total_cost, cons, dt, energy_model, travel_matrix
             )
             if candidate_row[2] >= reserve_kwh - 1e-6:
                 charge_site = site
                 charge_row = candidate_row
                 charge_arrive = candidate_arrive
+                charge_km = candidate_km
+                charge_energy = candidate_energy
                 break
         if charge_site is None or charge_row is None or charge_arrive is None:
             completed = False
@@ -693,7 +719,16 @@ def plan_route_with_charging(
             completed = False
             completion_reason = "time"
             break
+        depart = cur_start
         timeline.append(charge_row)
+        drive_legs.append({
+            "from": current_id,
+            "to": charge_site["id"],
+            "depart_min": depart,
+            "arrive_min": charge_arrive,
+            "distance_km": charge_km,
+            "energy_kwh": charge_energy,
+        })
         current_id = charge_site["id"]
         current_loc = charge_site
         soc = charge_row[2]
@@ -711,4 +746,6 @@ def plan_route_with_charging(
         "completion_reason": completion_reason,
         "completed_route_ids": completed_route_ids,
         "remaining_route_ids": route_ids_in_order[len(completed_route_ids):],
+        "drive_legs": drive_legs,
+        "late_delivery_ids": late_delivery_ids,
     }
