@@ -975,6 +975,8 @@ def _vehicle_summary(inst, vehicle_id, route, plan, run_config):
             "arrival_min": event.get("arrival_min"),
             "served_min": event.get("served_min"),
             "served_at": _format_minutes(event["served_min"]) if event.get("served_min") is not None else "",
+            "charge_start_min": int(charge["start_min"]) if charge else None,
+            "charge_end_min": int(charge["end_min"]) if charge else None,
             "lat": loc["lat"],
             "lon": loc["lon"],
         })
@@ -1130,6 +1132,222 @@ def _svg_curve(points, value_key, stroke, label):
           <path d="{d}" style="stroke:{stroke}" />
         </svg>
       </figure>
+    """
+
+
+def _diagnostic_time_range(vehicle_summaries):
+    times = []
+    for vehicle in vehicle_summaries:
+        times.extend(int(point["time"]) for point in vehicle.get("timeline_points", []))
+        for charge in vehicle.get("charges", []):
+            times.extend([int(charge["start"]), int(charge["end"])])
+    if not times:
+        return 0, 1
+    t_min, t_max = min(times), max(times)
+    if t_min == t_max:
+        t_max += 1
+    return t_min, t_max
+
+
+def _svg_soc_diagnostics(vehicle_summaries):
+    width, height = 760, 220
+    pad_l, pad_r, pad_t, pad_b = 48, 18, 18, 34
+    palette = ["#0f766e", "#2563eb", "#b45309", "#7c3aed", "#be123c", "#15803d"]
+    all_points = [point for vehicle in vehicle_summaries for point in vehicle.get("timeline_points", [])]
+    if not all_points:
+        return "<div class='chart-empty'>No SoC timeline data.</div>"
+    t_min, t_max = _diagnostic_time_range(vehicle_summaries)
+    soc_values = [float(point["soc"]) for point in all_points]
+    v_min, v_max = min(soc_values), max(soc_values)
+    if abs(v_max - v_min) < 1e-9:
+        v_max += 1.0
+        v_min = max(0.0, v_min - 1.0)
+
+    def xy(point):
+        x = pad_l + (int(point["time"]) - t_min) / (t_max - t_min) * (width - pad_l - pad_r)
+        y = pad_t + (v_max - float(point["soc"])) / (v_max - v_min) * (height - pad_t - pad_b)
+        return x, y
+
+    paths = []
+    legend = []
+    for idx, vehicle in enumerate(vehicle_summaries):
+        points = vehicle.get("timeline_points", [])
+        if not points:
+            continue
+        color = palette[idx % len(palette)]
+        d = " ".join(f"{'M' if pos == 0 else 'L'} {x:.1f} {y:.1f}" for pos, point in enumerate(points) for x, y in [xy(point)])
+        paths.append(f"<path d='{d}' style='stroke:{color}' />")
+        legend.append(f"<span><i style='background:{color}'></i>{html.escape(vehicle['vehicle_id'])}</span>")
+    return f"""
+      <figure class="diagnostic-card">
+        <figcaption>SoC over time by vehicle</figcaption>
+        <svg viewBox="0 0 {width} {height}" role="img" aria-label="SoC over time by vehicle">
+          <line x1="{pad_l}" y1="{height - pad_b}" x2="{width - pad_r}" y2="{height - pad_b}" />
+          <line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{height - pad_b}" />
+          <text x="5" y="{pad_t + 5}">{v_max:.1f}</text>
+          <text x="5" y="{height - pad_b}">{v_min:.1f}</text>
+          <text x="{pad_l}" y="{height - 8}">{_format_minutes(t_min)}</text>
+          <text x="{width - 72}" y="{height - 8}">{_format_minutes(t_max)}</text>
+          {''.join(paths)}
+        </svg>
+        <div class="diagnostic-legend">{''.join(legend)}</div>
+      </figure>
+    """
+
+
+def _svg_charging_sessions(vehicle_summaries):
+    rows = [(vehicle["vehicle_id"], charge) for vehicle in vehicle_summaries for charge in vehicle.get("charges", [])]
+    if not rows:
+        return """
+          <figure class="diagnostic-card">
+            <figcaption>Charging sessions over time</figcaption>
+            <div class="chart-empty">No charging sessions.</div>
+          </figure>
+        """
+    width = 760
+    row_h = 28
+    pad_l, pad_r, pad_t, pad_b = 80, 18, 18, 30
+    height = pad_t + pad_b + row_h * len(rows)
+    t_min, t_max = _diagnostic_time_range(vehicle_summaries)
+
+    def x(minute):
+        return pad_l + (int(minute) - t_min) / (t_max - t_min) * (width - pad_l - pad_r)
+
+    rects = []
+    for idx, (vehicle_id, charge) in enumerate(rows):
+        y = pad_t + idx * row_h + 5
+        x1 = x(charge["start"])
+        x2 = max(x1 + 2, x(charge["end"]))
+        label = f"{vehicle_id} {charge['station']}"
+        rects.append(f"""
+          <text x="5" y="{y + 12}">{html.escape(vehicle_id)}</text>
+          <rect x="{x1:.1f}" y="{y}" width="{x2 - x1:.1f}" height="16" />
+          <text x="{min(x2 + 5, width - 170):.1f}" y="{y + 12}">{html.escape(label)}</text>
+        """)
+    return f"""
+      <figure class="diagnostic-card">
+        <figcaption>Charging sessions over time</figcaption>
+        <svg viewBox="0 0 {width} {height}" role="img" aria-label="Charging sessions over time">
+          <line x1="{pad_l}" y1="{height - pad_b}" x2="{width - pad_r}" y2="{height - pad_b}" />
+          <text x="{pad_l}" y="{height - 8}">{_format_minutes(t_min)}</text>
+          <text x="{width - 72}" y="{height - 8}">{_format_minutes(t_max)}</text>
+          {''.join(rects)}
+        </svg>
+      </figure>
+    """
+
+
+def _svg_route_gantt(vehicle_summaries):
+    rows = []
+    for vehicle in vehicle_summaries:
+        stops = [stop for stop in vehicle.get("route", []) if stop.get("action") in ("Delivery", "Recharge")]
+        rows.extend((vehicle["vehicle_id"], stop) for stop in stops)
+    if not rows:
+        return "<div class='chart-empty'>No route events.</div>"
+    width = 760
+    row_h = 24
+    pad_l, pad_r, pad_t, pad_b = 86, 18, 18, 30
+    height = pad_t + pad_b + row_h * len(rows)
+    t_min, t_max = _diagnostic_time_range(vehicle_summaries)
+
+    def x(minute):
+        return pad_l + (int(minute) - t_min) / (t_max - t_min) * (width - pad_l - pad_r)
+
+    items = []
+    for idx, (vehicle_id, stop) in enumerate(rows):
+        y = pad_t + idx * row_h + 4
+        if stop["action"] == "Recharge":
+            start = stop.get("charge_start_min") or stop.get("arrival_min") or t_min
+            end = stop.get("charge_end_min") or start
+            color_class = "charge"
+            label = f"{vehicle_id} recharge {stop['id']}"
+        else:
+            start = stop.get("arrival_min") or stop.get("served_min") or t_min
+            end = stop.get("served_min") or start
+            color_class = "delivery"
+            label = f"{vehicle_id} {stop['id']}"
+        x1 = x(start)
+        x2 = max(x1 + 3, x(end))
+        items.append(f"""
+          <text x="5" y="{y + 12}">{html.escape(vehicle_id)}</text>
+          <rect class="{color_class}" x="{x1:.1f}" y="{y}" width="{x2 - x1:.1f}" height="14" />
+          <text x="{min(x2 + 5, width - 120):.1f}" y="{y + 12}">{html.escape(label)}</text>
+        """)
+    return f"""
+      <figure class="diagnostic-card diagnostic-wide">
+        <figcaption>Route Gantt chart</figcaption>
+        <svg viewBox="0 0 {width} {height}" role="img" aria-label="Route Gantt chart">
+          <line x1="{pad_l}" y1="{height - pad_b}" x2="{width - pad_r}" y2="{height - pad_b}" />
+          <text x="{pad_l}" y="{height - 8}">{_format_minutes(t_min)}</text>
+          <text x="{width - 72}" y="{height - 8}">{_format_minutes(t_max)}</text>
+          {''.join(items)}
+        </svg>
+      </figure>
+    """
+
+
+def _svg_bar_diagnostics(title, rows, value_suffix="", color="#0f766e"):
+    if not rows:
+        return f"<figure class='diagnostic-card'><figcaption>{html.escape(title)}</figcaption><div class='chart-empty'>No data.</div></figure>"
+    width = 520
+    row_h = 30
+    pad_l, pad_r, pad_t, pad_b = 116, 48, 18, 18
+    height = pad_t + pad_b + row_h * len(rows)
+    max_value = max(float(value) for _, value in rows) or 1.0
+    bars = []
+    for idx, (label, value) in enumerate(rows):
+        value = float(value)
+        y = pad_t + idx * row_h + 5
+        bar_w = (value / max_value) * (width - pad_l - pad_r)
+        bars.append(f"""
+          <text x="5" y="{y + 13}">{html.escape(str(label))}</text>
+          <rect x="{pad_l}" y="{y}" width="{bar_w:.1f}" height="16" style="fill:{color}" />
+          <text x="{min(pad_l + bar_w + 6, width - 42):.1f}" y="{y + 13}">{value:.2f}{html.escape(value_suffix)}</text>
+        """)
+    return f"""
+      <figure class="diagnostic-card">
+        <figcaption>{html.escape(title)}</figcaption>
+        <svg viewBox="0 0 {width} {height}" role="img" aria-label="{html.escape(title)}">
+          {''.join(bars)}
+        </svg>
+      </figure>
+    """
+
+
+def _served_unserved_table(vehicle_summaries):
+    rows = []
+    for vehicle in vehicle_summaries:
+        served = len([stop for stop in vehicle.get("route", []) if stop.get("action") == "Delivery"])
+        unserved = len([stop for stop in vehicle.get("remaining_route_ids", []) if str(stop).startswith("C")])
+        rows.append(
+            f"<tr><td>{html.escape(vehicle['vehicle_id'])}</td><td>{served}</td><td>{unserved}</td><td>{vehicle.get('evaluation', {}).get('customers_served_pct', 0.0):.1f}%</td></tr>"
+        )
+    return f"""
+      <figure class="diagnostic-card">
+        <figcaption>Served vs unserved customers</figcaption>
+        <table>
+          <thead><tr><th>Vehicle</th><th>Served</th><th>Unserved</th><th>Served %</th></tr></thead>
+          <tbody>{''.join(rows)}</tbody>
+        </table>
+      </figure>
+    """
+
+
+def _diagnostics_html(vehicle_summaries):
+    cost_rows = [(vehicle["vehicle_id"], vehicle.get("total_energy_cost", 0.0)) for vehicle in vehicle_summaries]
+    late_rows = [(vehicle["vehicle_id"], vehicle.get("evaluation", {}).get("late_deliveries", 0)) for vehicle in vehicle_summaries]
+    return f"""
+      <section class="diagnostics">
+        <h3>Visual Diagnostics</h3>
+        <div class="diagnostic-grid">
+          {_svg_soc_diagnostics(vehicle_summaries)}
+          {_svg_charging_sessions(vehicle_summaries)}
+          {_svg_route_gantt(vehicle_summaries)}
+          {_served_unserved_table(vehicle_summaries)}
+          {_svg_bar_diagnostics("Energy cost by route", cost_rows, "", "#7c3aed")}
+          {_svg_bar_diagnostics("Late deliveries by route", late_rows, "", "#be123c")}
+        </div>
+      </section>
     """
 
 
@@ -1445,6 +1663,7 @@ def _page(form=None, results=None, error=None):
                     </article>
                 """)
             vehicle_html = "\n".join(vehicles)
+            diagnostics_html = _diagnostics_html(result["vehicle_summaries"])
             chunks.append(f"""
                 <section class="result">
                     <div class="result-head">
@@ -1454,6 +1673,7 @@ def _page(form=None, results=None, error=None):
                     {config_html}
                     <div class="downloads"><a href="/outputs/{html.escape(result['summary_csv_path'])}" target="_blank">Download CSV summary</a></div>
                     <iframe src="/outputs/{html.escape(first_map)}" title="Run {result['run']} map"></iframe>
+                    {diagnostics_html}
                     <div class="vehicles">{vehicle_html}</div>
                     <details>
                         <summary>Routes</summary>
@@ -1675,6 +1895,76 @@ def _page(form=None, results=None, error=None):
       padding: 16px;
       border-top: 1px solid var(--line);
       background: #fbfcfd;
+    }}
+    .diagnostics {{
+      padding: 16px;
+      border-top: 1px solid var(--line);
+      background: #ffffff;
+    }}
+    .diagnostics h3 {{ margin-bottom: 12px; }}
+    .diagnostic-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(260px, 1fr));
+      gap: 12px;
+    }}
+    .diagnostic-card {{
+      margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+      padding: 10px;
+      overflow: auto;
+    }}
+    .diagnostic-wide {{ grid-column: 1 / -1; }}
+    .diagnostic-card figcaption {{
+      color: #344054;
+      font-weight: 700;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }}
+    .diagnostic-card svg {{
+      width: 100%;
+      height: auto;
+      display: block;
+    }}
+    .diagnostic-card line {{
+      stroke: #cbd5e1;
+      stroke-width: 1;
+    }}
+    .diagnostic-card path {{
+      fill: none;
+      stroke-width: 3;
+      stroke-linejoin: round;
+      stroke-linecap: round;
+    }}
+    .diagnostic-card rect {{
+      fill: #0f766e;
+      rx: 3;
+    }}
+    .diagnostic-card rect.charge {{ fill: #7c3aed; }}
+    .diagnostic-card rect.delivery {{ fill: #0f766e; }}
+    .diagnostic-card text {{
+      fill: #667085;
+      font-size: 11px;
+    }}
+    .diagnostic-legend {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .diagnostic-legend span {{
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }}
+    .diagnostic-legend i {{
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
     }}
     .vehicle {{
       border: 1px solid var(--line);
@@ -1921,7 +2211,8 @@ def _page(form=None, results=None, error=None):
       .run-config {{ grid-template-columns: repeat(2, minmax(120px, 1fr)); }}
       .metrics {{ grid-template-columns: repeat(2, minmax(120px, 1fr)); }}
       .vehicle-grid {{ grid-template-columns: 1fr; }}
-      .curves, .compare-grid, .compare-controls {{ grid-template-columns: 1fr; }}
+      .curves, .compare-grid, .compare-controls, .diagnostic-grid {{ grid-template-columns: 1fr; }}
+      .diagnostic-wide {{ grid-column: auto; }}
     }}
   </style>
 </head>

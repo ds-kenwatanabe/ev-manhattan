@@ -100,6 +100,8 @@ Each run shows:
 - end time,
 - elapsed and billable time.
 
+`Visual Diagnostics` appears below the map for each run. It includes SoC over time by vehicle, charging sessions over time, a route Gantt chart, served vs unserved customer counts, energy cost by route, and late deliveries by route.
+
 Recharge stops appear directly in stop order as route steps:
 
 ```text

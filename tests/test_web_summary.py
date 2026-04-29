@@ -1,6 +1,6 @@
 import pytest
 
-from src.web.app import _build_routes, _route_events, _svg_curve, _vehicle_summary, _write_summary_csv
+from src.web.app import _build_routes, _diagnostics_html, _route_events, _svg_curve, _vehicle_summary, _write_summary_csv
 
 
 @pytest.fixture
@@ -101,6 +101,51 @@ def test_svg_curve_renders_timeline_path():
     assert "<svg" in html
     assert "SoC kWh" in html
     assert "<path" in html
+
+
+def test_diagnostics_html_renders_expected_plots():
+    html = _diagnostics_html([
+        {
+            "vehicle_id": "V1",
+            "timeline_points": [
+                {"time": 480, "soc": 5.0, "cost": 0.0},
+                {"time": 540, "soc": 4.0, "cost": 0.3},
+            ],
+            "charges": [{"station": "CH10", "start": 500, "end": 530, "energy_kwh": 1.0, "cost_usd": 0.3}],
+            "route": [
+                {"action": "Delivery", "id": "C001", "arrival_min": 490, "served_min": 500},
+                {"action": "Recharge", "id": "CH10", "charge_start_min": 500, "charge_end_min": 530},
+            ],
+            "remaining_route_ids": ["C002"],
+            "total_energy_cost": 1.25,
+            "evaluation": {"customers_served_pct": 50.0, "late_deliveries": 1},
+        }
+    ])
+
+    assert "Visual Diagnostics" in html
+    assert "SoC over time by vehicle" in html
+    assert "Charging sessions over time" in html
+    assert "Route Gantt chart" in html
+    assert "Served vs unserved customers" in html
+    assert "Energy cost by route" in html
+    assert "Late deliveries by route" in html
+    assert "C002" not in html
+
+
+def test_diagnostics_html_handles_no_charging_sessions():
+    html = _diagnostics_html([
+        {
+            "vehicle_id": "V1",
+            "timeline_points": [{"time": 480, "soc": 5.0, "cost": 0.0}],
+            "charges": [],
+            "route": [],
+            "remaining_route_ids": [],
+            "total_energy_cost": 0.0,
+            "evaluation": {"customers_served_pct": 100.0, "late_deliveries": 0},
+        }
+    ])
+
+    assert "No charging sessions." in html
 
 
 def test_summary_csv_export(tmp_path, monkeypatch):
