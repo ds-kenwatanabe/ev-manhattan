@@ -874,23 +874,53 @@ def _route_events(timeline, charge_sessions, depot_id):
         charge_by_station.setdefault(charge["station_id"], []).append(charge)
     charge_offsets = {station_id: 0 for station_id in charge_by_station}
     events = []
-    last_loc = None
-    for row in timeline:
+    idx = 0
+    while idx < len(timeline):
+        row = timeline[idx]
         loc_id = row[0]
-        if loc_id == last_loc:
-            continue
+        start_min = int(row[1])
+        end_min = start_min
+        idx += 1
+        while idx < len(timeline) and timeline[idx][0] == loc_id:
+            end_min = int(timeline[idx][1])
+            idx += 1
         if loc_id.startswith("CH") or loc_id == depot_id:
             sessions = charge_by_station.get(loc_id, [])
             offset = charge_offsets.get(loc_id, 0)
             if offset < len(sessions) and int(sessions[offset]["start_min"]) >= int(row[1]):
-                events.append({"loc_id": loc_id, "event": "recharge", "charge": sessions[offset]})
+                events.append({
+                    "loc_id": loc_id,
+                    "event": "recharge",
+                    "charge": sessions[offset],
+                    "arrival_min": start_min,
+                    "served_min": None,
+                })
                 charge_offsets[loc_id] = offset + 1
             else:
-                events.append({"loc_id": loc_id, "event": "depot" if loc_id == depot_id else "stop", "charge": None})
+                events.append({
+                    "loc_id": loc_id,
+                    "event": "depot" if loc_id == depot_id else "stop",
+                    "charge": None,
+                    "arrival_min": start_min,
+                    "served_min": None,
+                })
         else:
-            events.append({"loc_id": loc_id, "event": "delivery", "charge": None})
-        last_loc = loc_id
+            events.append({
+                "loc_id": loc_id,
+                "event": "delivery",
+                "charge": None,
+                "arrival_min": start_min,
+                "served_min": end_min,
+            })
     return events
+
+
+def _served_customer_times(route_details):
+    return [
+        f"{stop['id']} {_format_minutes(stop['served_min'])}"
+        for stop in route_details
+        if stop.get("action") == "Delivery" and stop.get("served_min") is not None
+    ]
 
 
 def _vehicle_summary(inst, vehicle_id, route, plan, run_config):
@@ -942,6 +972,9 @@ def _vehicle_summary(inst, vehicle_id, route, plan, run_config):
             "kind": loc["kind"],
             "action": action,
             "note": note,
+            "arrival_min": event.get("arrival_min"),
+            "served_min": event.get("served_min"),
+            "served_at": _format_minutes(event["served_min"]) if event.get("served_min") is not None else "",
             "lat": loc["lat"],
             "lon": loc["lon"],
         })
@@ -978,6 +1011,7 @@ def _vehicle_summary(inst, vehicle_id, route, plan, run_config):
     return {
         "vehicle_id": vehicle_id,
         "route": route_details,
+        "customer_served_times": _served_customer_times(route_details),
         "drive_energy_kwh": drive_energy,
         "drive_energy_cost_usd": drive_energy_cost,
         "charge_energy_kwh": charge_energy,
@@ -1116,6 +1150,7 @@ def _write_summary_csv(stamp, run_number, vehicle_summaries):
         "elapsed_min",
         "billable_min",
         "remaining_stops",
+        "customer_served_times",
         "customers_served_pct",
         "total_distance_km",
         "total_time_min",
@@ -1145,6 +1180,7 @@ def _write_summary_csv(stamp, run_number, vehicle_summaries):
                 "elapsed_min": vehicle["elapsed_min"],
                 "billable_min": vehicle["billable_min"],
                 "remaining_stops": " ".join(vehicle["remaining_route_ids"]),
+                "customer_served_times": "; ".join(vehicle.get("customer_served_times", [])),
                 "customers_served_pct": f"{evaluation.get('customers_served_pct', 0.0):.2f}",
                 "total_distance_km": f"{evaluation.get('total_distance_km', 0.0):.4f}",
                 "total_time_min": evaluation.get("total_time_min", vehicle["elapsed_min"]),
@@ -1331,6 +1367,7 @@ def _page(form=None, results=None, error=None):
                     f"<td>{stop['order']}</td>"
                     f"<td><strong>{html.escape(stop['action'])}</strong><br><span class='muted'>{html.escape(stop['id'])}</span></td>"
                     f"<td>{html.escape(stop['name'])}</td>"
+                    f"<td>{html.escape(stop['served_at']) if stop['served_at'] else '-'}</td>"
                     f"<td>{html.escape(stop['note']) if stop['note'] else '-'}</td>"
                     f"<td>{stop['lat']:.6f}</td>"
                     f"<td>{stop['lon']:.6f}</td>"
@@ -1394,7 +1431,7 @@ def _page(form=None, results=None, error=None):
                           <h4>Spot Order</h4>
                           <table>
                             <thead>
-                              <tr><th>#</th><th>Action</th><th>Stop</th><th>Details</th><th>Lat</th><th>Lon</th></tr>
+                              <tr><th>#</th><th>Action</th><th>Stop</th><th>Served</th><th>Details</th><th>Lat</th><th>Lon</th></tr>
                             </thead>
                             <tbody>{route_rows}</tbody>
                           </table>

@@ -112,6 +112,8 @@ On the map, recharge stops are green numbered markers.
 
 `Stop Order` shows the actual route sequence. Delivery stops and recharge stops are both listed as numbered steps. Recharge rows include time, kWh added, and charging cost.
 
+Delivery rows include a `Served` time in `HH:MM` format. If the vehicle waits for a customer time window or applies service time, this is the final served time after that wait/service segment.
+
 `Energy used` is total driving energy:
 
 ```text

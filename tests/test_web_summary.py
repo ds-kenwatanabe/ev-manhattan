@@ -37,6 +37,24 @@ def test_route_events_include_one_clean_recharge_step():
         ("recharge", "CH10"),
         ("delivery", "C002"),
     ]
+    assert events[1]["served_min"] == 500
+    assert events[3]["served_min"] == 580
+
+
+def test_route_events_use_end_of_customer_segment_as_served_time():
+    timeline = [
+        ("DEPOT1", 480, 5.0, 0.0),
+        ("C001", 490, 4.0, 0.0),
+        ("C001", 500, 4.0, 0.0),
+        ("C001", 505, 4.0, 0.0),
+        ("DEPOT1", 520, 3.8, 0.0),
+    ]
+
+    events = _route_events(timeline, [], "DEPOT1")
+
+    assert events[1]["event"] == "delivery"
+    assert events[1]["arrival_min"] == 490
+    assert events[1]["served_min"] == 505
 
 
 @pytest.mark.integration
@@ -62,6 +80,9 @@ def test_vehicle_summary_formats_recharge_in_stop_order(tiny_instance):
 
     assert summary["status_text"] == "Completed route"
     assert [row["action"] for row in summary["route"]] == ["Depot", "Delivery", "Recharge", "Delivery"]
+    assert summary["route"][1]["served_at"] == "08:20"
+    assert summary["route"][3]["served_at"] == "09:40"
+    assert summary["customer_served_times"] == ["C001 08:20", "C002 09:40"]
     recharge_row = summary["route"][2]
     assert recharge_row["id"] == "CH10"
     assert "2.00 kWh" in recharge_row["note"]
@@ -101,11 +122,14 @@ def test_summary_csv_export(tmp_path, monkeypatch):
             "elapsed_min": 60,
             "billable_min": 50,
             "remaining_route_ids": ["C002"],
+            "customer_served_times": ["C001 08:20"],
         }],
     )
 
     text = path.read_text()
     assert "infeasibility_reason" in text
+    assert "customer_served_times" in text
+    assert "C001 08:20" in text
     assert "Did not complete route in the given time" in text
 
 
