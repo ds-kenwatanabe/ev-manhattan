@@ -28,7 +28,7 @@ make setup
 ## Start The Browser UI
 
 ```bash
-.venv/bin/python src/run/web_app.py --host 127.0.0.1 --port 8000
+.venv/bin/python src/web/app.py --host 127.0.0.1 --port 8000
 ```
 
 Open:
@@ -42,7 +42,7 @@ http://127.0.0.1:8000
 Find the running process:
 
 ```bash
-pgrep -af "src/run/web_app.py"
+pgrep -af "src/web/app.py"
 ```
 
 Stop it:
@@ -54,7 +54,7 @@ kill <pid>
 Start it again:
 
 ```bash
-.venv/bin/python src/run/web_app.py --host 127.0.0.1 --port 8000
+.venv/bin/python src/web/app.py --host 127.0.0.1 --port 8000
 ```
 
 ## Verify The Install
@@ -62,7 +62,7 @@ Start it again:
 Compile the main files:
 
 ```bash
-.venv/bin/python -m py_compile src/run/web_app.py src/solve/rcsp_one_vehicle.py src/viz/overlay_plan.py
+.venv/bin/python -m py_compile src/web/app.py src/solver/rcsp.py src/viz/overlay_plan.py
 ```
 
 Check the web app responds:

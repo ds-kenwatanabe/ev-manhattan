@@ -1,4 +1,4 @@
-from src.metrics.energy import EnergyModel, kwh_needed, usable_battery_kwh
+from src.energy.model import EnergyModel, kwh_needed, usable_battery_kwh
 
 
 def test_simple_energy_model_preserves_distance_times_consumption():

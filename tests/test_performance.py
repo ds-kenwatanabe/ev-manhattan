@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from src.solve import rcsp_one_vehicle as planner
+from src.solver import rcsp as planner
 
 
 pytestmark = pytest.mark.performance

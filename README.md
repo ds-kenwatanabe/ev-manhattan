@@ -66,7 +66,7 @@ Driving:
 - Optional realistic energy modifiers add payload, stop-and-go, temperature/HVAC, speed, regenerative braking, and usable battery degradation effects.
 - SoC after a drive is `previous_soc_kwh - driving_energy_kwh`.
 - Travel time comes from a cached `T[i, j, t]` matrix, rounded up to the `dt` grid.
-- Speed starts at `30 km/h` and is reduced by the traffic multiplier in `src/sim/traffic.py`.
+- Speed starts at `30 km/h` and is reduced by the traffic multiplier in `src/graph/traffic.py`.
 
 Travel-time matrix:
 
@@ -123,7 +123,7 @@ From the project root:
 cd ev-manhattan
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python src/run/web_app.py --host 127.0.0.1 --port 8000
+.venv/bin/python src/web/app.py --host 127.0.0.1 --port 8000
 ```
 
 Or use the reproducible Make targets:
@@ -143,7 +143,7 @@ http://127.0.0.1:8000
 If a server is already running, stop it first:
 
 ```bash
-pgrep -af "src/run/web_app.py"
+pgrep -af "src/web/app.py"
 kill <pid>
 ```
 
@@ -152,7 +152,7 @@ kill <pid>
 The web app is in:
 
 ```text
-src/run/web_app.py
+src/web/app.py
 ```
 
 Main controls:
@@ -220,7 +220,7 @@ make sample SEED=7
 Run the browser app:
 
 ```bash
-.venv/bin/python src/run/web_app.py --host 127.0.0.1 --port 8000
+.venv/bin/python src/web/app.py --host 127.0.0.1 --port 8000
 ```
 
 Run with Make:
@@ -232,25 +232,25 @@ make run
 Run the script planner:
 
 ```bash
-.venv/bin/python src/run/run_plan_day.py
+.venv/bin/python src/experiments/run_plan_day.py
 ```
 
 Compile key files:
 
 ```bash
-.venv/bin/python -m py_compile src/run/web_app.py src/solve/rcsp_one_vehicle.py src/viz/overlay_plan.py
+.venv/bin/python -m py_compile src/web/app.py src/solver/rcsp.py src/viz/overlay_plan.py
 ```
 
 Regenerate the road graph:
 
 ```bash
-.venv/bin/python src/build_graph.py
+.venv/bin/python src/graph/build_graph.py
 ```
 
 Regenerate the base instance:
 
 ```bash
-.venv/bin/python src/build_instance.py
+.venv/bin/python src/data/build_instance.py
 ```
 
 Build and run Docker:
@@ -275,32 +275,39 @@ More detailed docs are in:
 
 ```text
 src/
-  run/
-    web_app.py          Browser UI
+  data/
+    build_instance.py   Base instance builder
+    fetch_ocm.py        Open Charge Map fetcher
+    sample_scenario.py  Seeded sample dataset generator
+  graph/
+    build_graph.py      Road graph builder
+    fetch_osm.py        OSM road network fetcher
+    travel.py           Network travel metrics
+    time_dependent.py   Cached time-dependent travel-time matrix
+    traffic.py          Time-dependent speed multiplier
+  pricing/
+    nyiso.py            NYISO price fetcher and normalizer
+  energy/
+    model.py            Energy and usable-battery model
+  solver/
+    greedy.py           Nearest-neighbor and charging-aware ordering
+    evrptw.py           OR-Tools VRPTW baseline
+    rcsp.py             Charging-aware vehicle feasibility planner
+  experiments/
     plan_day.py         Multi-vehicle run wrapper
     run_plan_day.py     Script entry point
-  solve/
-    rcsp_one_vehicle.py Charging-aware vehicle planner
-    vrptw_baseline.py   Baseline routing
+    queues.py           Charger queue repricing helper
   viz/
     overlay_plan.py     Per-vehicle Folium route maps
     map.py              Base map generation
+  web/
+    app.py              Browser UI
   eval/
     summarize.py        Timeline, drive, and recharge summaries
-  sim/
-    traffic.py          Time-dependent speed multiplier
-    queues.py           Charger queue scaffold
-  metrics/
-    travel.py           Network travel metrics
-    energy.py           Energy helpers
-    time_dependent.py   Cached time-dependent travel-time matrix
-  build_graph.py        Road graph builder
-  build_instance.py     Base instance builder
-  data/
-    sample_scenario.py  Seeded sample dataset generator
-  fetch_ocm.py          Open Charge Map fetcher
-  fetch_nyiso.py        NYISO price fetcher
+    metrics.py          Evaluation metrics
 ```
+
+The old `src/run`, `src/solve`, `src/metrics`, and top-level script paths remain as compatibility wrappers.
 
 ## Notes
 

@@ -19,13 +19,13 @@ data/processed/manhattan_drive.graphml
 Check whether the process is running:
 
 ```bash
-pgrep -af "src/run/web_app.py"
+pgrep -af "src/web/app.py"
 ```
 
 Start it:
 
 ```bash
-.venv/bin/python src/run/web_app.py --host 127.0.0.1 --port 8000
+.venv/bin/python src/web/app.py --host 127.0.0.1 --port 8000
 ```
 
 Open:
@@ -39,7 +39,7 @@ http://127.0.0.1:8000
 Find the process:
 
 ```bash
-pgrep -af "src/run/web_app.py"
+pgrep -af "src/web/app.py"
 ```
 
 Stop it:
@@ -51,7 +51,7 @@ kill <pid>
 Or start on another port:
 
 ```bash
-.venv/bin/python src/run/web_app.py --host 127.0.0.1 --port 8001
+.venv/bin/python src/web/app.py --host 127.0.0.1 --port 8001
 ```
 
 ## Map Selector Does Not Update Customers

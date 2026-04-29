@@ -7,7 +7,7 @@ PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.solve.rcsp_one_vehicle import plan_route_with_charging
+from src.solver.rcsp import plan_route_with_charging
 
 inst_path = str(PROCESSED_DIR / "instance_2025-07-15.json")
 inst = json.load(open(inst_path))

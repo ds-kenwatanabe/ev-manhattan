@@ -1,4 +1,4 @@
-from src.run.web_app import _nyiso_error_summary
+from src.web.app import _nyiso_error_summary
 
 
 def test_nyiso_dns_errors_are_summarized_for_ui():

@@ -3,19 +3,19 @@
 The main planner is implemented in:
 
 ```text
-src/solve/rcsp_one_vehicle.py
+src/solver/rcsp.py
 ```
 
 The multi-vehicle wrapper is:
 
 ```text
-src/run/plan_day.py
+src/experiments/plan_day.py
 ```
 
 The browser app calls these through:
 
 ```text
-src/run/web_app.py
+src/web/app.py
 ```
 
 ## Route Flow
@@ -127,7 +127,7 @@ The result is rounded up to the configured `dt` grid:
 travel_minutes = ceil(raw_minutes / dt) * dt
 ```
 
-The base speed is `30 km/h`. It is multiplied by `src/sim/traffic.py`:
+The base speed is `30 km/h`. It is multiplied by `src/graph/traffic.py`:
 
 ```text
 07:00-10:00 -> 0.70

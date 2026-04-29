@@ -1,6 +1,6 @@
 import pytest
 
-from src.run.web_app import _build_routes, _route_events, _svg_curve, _vehicle_summary, _write_summary_csv
+from src.web.app import _build_routes, _route_events, _svg_curve, _vehicle_summary, _write_summary_csv
 
 
 @pytest.fixture
@@ -83,7 +83,7 @@ def test_svg_curve_renders_timeline_path():
 
 
 def test_summary_csv_export(tmp_path, monkeypatch):
-    monkeypatch.setattr("src.run.web_app.OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr("src.web.app.OUTPUT_DIR", tmp_path)
     path = _write_summary_csv(
         "stamp",
         1,

@@ -2,7 +2,7 @@ import json
 
 import pandas as pd
 
-from src.sim.queues import simulate_queues_and_reprice
+from src.experiments.queues import simulate_queues_and_reprice
 
 
 def test_single_plug_charger_waits_for_previous_session(tmp_path):

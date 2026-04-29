@@ -5,7 +5,7 @@ The browser UI is the main way to use the project.
 Run it with:
 
 ```bash
-.venv/bin/python src/run/web_app.py --host 127.0.0.1 --port 8000
+.venv/bin/python src/web/app.py --host 127.0.0.1 --port 8000
 ```
 
 Open:

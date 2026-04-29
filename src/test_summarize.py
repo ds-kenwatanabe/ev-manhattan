@@ -10,9 +10,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 # 1) compute a plan (res)
-from src.solve.rcsp_one_vehicle import plan_route_with_charging
+from src.solver.rcsp import plan_route_with_charging
 from src.eval.summarize import summarize_timeline
-from src.sim.queues import simulate_queues_and_reprice
+from src.experiments.queues import simulate_queues_and_reprice
 
 INST = str(PROCESSED_DIR / "instance_2025-07-15.json")
 inst = json.load(open(INST))

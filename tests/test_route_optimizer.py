@@ -1,4 +1,4 @@
-from src.solve.route_optimizer import build_charging_aware_routes, build_ortools_vrptw_routes
+from src.solver.greedy import build_charging_aware_routes, build_ortools_vrptw_routes
 
 
 def test_charging_aware_order_prefers_customer_near_charger_when_battery_is_tight():

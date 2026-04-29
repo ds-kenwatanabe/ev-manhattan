@@ -1,4 +1,4 @@
-from src.run.web_app import _build_routes
+from src.web.app import _build_routes
 
 
 def _customers(n):

@@ -26,7 +26,7 @@ install: venv
 	$(PIP) install -r requirements.txt
 
 run:
-	$(PY) src/run/web_app.py --host $(HOST) --port $(PORT)
+	$(PY) src/web/app.py --host $(HOST) --port $(PORT)
 
 test:
 	$(PY) -m pytest
@@ -38,7 +38,7 @@ sample:
 	$(PY) src/data/sample_scenario.py --seed $(SEED) --customers $(SAMPLE_CUSTOMERS) --chargers $(SAMPLE_CHARGERS) --date $(SAMPLE_DATE) --out-dir $(SAMPLE_DIR)
 
 compile:
-	$(PY) -m py_compile src/run/web_app.py src/solve/rcsp_one_vehicle.py src/viz/overlay_plan.py src/data/sample_scenario.py
+	$(PY) -m py_compile src/web/app.py src/solver/rcsp.py src/viz/overlay_plan.py src/data/sample_scenario.py
 
 docker-build:
 	docker build -t ev-manhattan .

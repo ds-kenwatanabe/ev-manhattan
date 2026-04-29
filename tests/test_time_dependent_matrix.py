@@ -1,4 +1,4 @@
-from src.metrics.time_dependent import TimeDependentTravelMatrix
+from src.graph.time_dependent import TimeDependentTravelMatrix
 
 
 def test_time_dependent_matrix_caches_pair_for_all_departure_buckets(tmp_path):

@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.fetch_nyiso import _normalize_nyiso_zone_j
+from src.pricing.nyiso import _normalize_nyiso_zone_j
 
 
 def test_normalize_nyiso_zone_j_filters_nyc_ptid_and_converts_to_kwh():

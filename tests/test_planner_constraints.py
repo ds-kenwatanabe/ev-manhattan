@@ -1,6 +1,6 @@
 import json
 
-from src.solve import rcsp_one_vehicle as planner
+from src.solver import rcsp as planner
 
 
 def test_vehicle_capacity_constraint_fails_before_dispatch(monkeypatch, tmp_path):
